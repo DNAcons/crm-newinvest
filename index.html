@@ -24,7 +24,6 @@
         .drag-over { outline: 2px dashed #d4af37; outline-offset: -6px; background: rgba(212, 175, 55, 0.08); }
         .dragging { opacity: 0.4; }
 
-        /* Заметный горизонтальный скролл для воронки */
         .pipeline-scroll {
             overflow-x: auto;
             overflow-y: hidden;
@@ -62,7 +61,6 @@
         </div>
     </div>
 
-    <!-- Локальные Firebase SDK -->
     <script src="./firebase-app.js"></script>
     <script src="./firebase-firestore.js"></script>
 
@@ -142,6 +140,7 @@
             users: ALL_MANAGERS,
             view: 'pipeline',
             modalOpen: false,
+            modalReadOnly: false,
             selectedDealId: null,
             newDealStage: null,
             firebaseConnected: firebaseReady,
@@ -200,7 +199,16 @@
         function findUser(id) { return state.users.find(function (u) { return u.id === id; }) || null; }
         function findDeal(id) { return state.deals.find(function (d) { return d.id === id; }) || null; }
         function getUserLabel(user) { return user ? user.lastName + ' ' + user.firstName : 'Неизвестно'; }
-        function isOwner(deal) { return !deal || deal.managerId === state.currentUser.id; }
+
+        function isOwner(deal) {
+            return !deal || deal.managerId === state.currentUser.id;
+        }
+
+        function canEditDeal(deal) {
+            if (state.modalReadOnly) return false;
+            if (state.view === 'allprojects') return false;
+            return !deal || deal.managerId === state.currentUser.id;
+        }
 
         function isMine(deal) {
             if (!state.currentUser) return false;
@@ -232,6 +240,10 @@
 
         function getMyDeals() {
             return (state.deals || []).filter(function (d) { return isMine(d); });
+        }
+
+        function getAllDeals() {
+            return state.deals || [];
         }
 
         function getAnalyticsDeals() {
@@ -322,7 +334,15 @@
         }
 
         window.handleFileUpload = function (input) {
+            if (state.modalReadOnly) return;
             if (!input.files || !input.files[0] || !state.selectedDealId) return;
+
+            var deal = findDeal(state.selectedDealId);
+            if (!deal || deal.managerId !== state.currentUser.id) {
+                alert('Редактировать чужие сделки запрещено');
+                return;
+            }
+
             var file = input.files[0];
             if (!db) { alert('Нет подключения к БД'); return; }
             if (file.size > 20 * 1024 * 1024) {
@@ -417,8 +437,15 @@
         };
 
         window.deleteFileDoc = function (fileId) {
+            if (state.modalReadOnly) return;
             if (!confirm('Удалить файл?')) return;
             if (!db) return;
+
+            var deal = findDeal(state.selectedDealId);
+            if (!deal || deal.managerId !== state.currentUser.id) {
+                alert('Удалять файлы в чужих сделках запрещено');
+                return;
+            }
 
             db.collection('fileChunks').where('fileId', '==', fileId).get().then(function (snap) {
                 var batch = db.batch();
@@ -433,7 +460,15 @@
         };
 
         window.attachLink = function () {
+            if (state.modalReadOnly) return;
             if (!state.selectedDealId || !db) return;
+
+            var deal = findDeal(state.selectedDealId);
+            if (!deal || deal.managerId !== state.currentUser.id) {
+                alert('Прикреплять ссылки в чужих сделках запрещено');
+                return;
+            }
+
             var url = prompt('Вставьте ссылку на файл:');
             if (!url || !url.trim()) return;
             var name = prompt('Название файла:', 'Внешний файл');
@@ -470,6 +505,7 @@
             state.deals = [];
             state.taskPopup = null;
             state.modalOpen = false;
+            state.modalReadOnly = false;
             state.selectedDealId = null;
             state.newDealStage = null;
             localStorage.removeItem(KEY_CURRENT_USER_ID);
@@ -539,6 +575,7 @@
         function renderApp() {
             var titles = {
                 pipeline: ['Моя воронка проектов', 'Только ваши сделки и задачи'],
+                allprojects: ['Все проекты команды', 'Сводная воронка. Редактирование запрещено'],
                 analytics: ['Аналитика', 'Статистика по проектам команды'],
                 tasks: ['Мои задачи', 'Интерактивный календарь']
             };
@@ -560,7 +597,10 @@
 
                     <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
                         <button onclick="window.setView('pipeline')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.view === 'pipeline' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}">
-                            <i class="fa-solid fa-chart-column w-5"></i> Воронка сделок
+                            <i class="fa-solid fa-chart-column w-5"></i> Моя воронка
+                        </button>
+                        <button onclick="window.setView('allprojects')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.view === 'allprojects' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}">
+                            <i class="fa-solid fa-layer-group w-5"></i> Все проекты
                         </button>
                         <button onclick="window.setView('tasks')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.view === 'tasks' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50'}">
                             <i class="fa-solid fa-calendar-check w-5"></i> Задачи
@@ -613,6 +653,12 @@
                                 </button>
                             ` : ''}
 
+                            ${state.view === 'allprojects' ? `
+                                <span class="hidden md:inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-1 rounded-full">
+                                    <i class="fa-solid fa-lock text-[9px]"></i> Только просмотр
+                                </span>
+                            ` : ''}
+
                             ${state.view === 'analytics' ? `
                                 <div class="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">
                                     <button onclick="window.setAnalyticsScope('all')" class="px-3 py-1.5 rounded-md transition-colors ${state.analyticsScope === 'all' ? 'bg-white shadow text-slate-900' : 'text-slate-500'}">
@@ -627,7 +673,10 @@
                     </header>
 
                     <div class="flex-1 relative overflow-auto">
-                        ${state.view === 'pipeline' ? renderPipeline() : (state.view === 'tasks' ? renderTasksView() : renderAnalytics())}
+                        ${state.view === 'pipeline' ? renderPipeline(false) : ''}
+                        ${state.view === 'allprojects' ? renderPipeline(true) : ''}
+                        ${state.view === 'tasks' ? renderTasksView() : ''}
+                        ${state.view === 'analytics' ? renderAnalytics() : ''}
                     </div>
                 </main>
             </div>
@@ -652,7 +701,10 @@
 
                     <nav class="flex-1 p-4 space-y-1">
                         <button onclick="window.setView('pipeline'); window.toggleMobileMenu();" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${state.view === 'pipeline' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}">
-                            <i class="fa-solid fa-chart-column w-5"></i> Воронка сделок
+                            <i class="fa-solid fa-chart-column w-5"></i> Моя воронка
+                        </button>
+                        <button onclick="window.setView('allprojects'); window.toggleMobileMenu();" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${state.view === 'allprojects' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}">
+                            <i class="fa-solid fa-layer-group w-5"></i> Все проекты
                         </button>
                         <button onclick="window.setView('tasks'); window.toggleMobileMenu();" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${state.view === 'tasks' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'}">
                             <i class="fa-solid fa-calendar-check w-5"></i> Задачи
@@ -687,6 +739,7 @@
         window.setView = function (view) {
             state.view = view;
             state.modalOpen = false;
+            state.modalReadOnly = false;
             state.taskPopup = null;
             state.newDealStage = null;
 
@@ -706,6 +759,11 @@
 
         // ============ DRAG & DROP ============
         window.dragStart = function (e, id) {
+            if (state.view === 'allprojects') {
+                e.preventDefault();
+                return;
+            }
+
             var deal = findDeal(id);
             if (!deal || deal.managerId !== state.currentUser.id) {
                 e.preventDefault();
@@ -731,6 +789,7 @@
         };
 
         window.dragOver = function (e) {
+            if (state.view === 'allprojects') return;
             e.preventDefault();
             try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
             if (!e.currentTarget.classList.contains('drag-over')) {
@@ -745,6 +804,8 @@
         window.dropDeal = function (e, stageId) {
             e.preventDefault();
             e.currentTarget.classList.remove('drag-over');
+
+            if (state.view === 'allprojects') return;
 
             var id = window.draggingDealId;
             if (!id) {
@@ -763,8 +824,8 @@
         };
 
         // ============ ВОРОНКА ============
-        function renderPipeline() {
-            var deals = getMyDeals();
+        function renderPipeline(readOnly) {
+            var deals = readOnly ? getAllDeals() : getMyDeals();
 
             return `<div class="h-full pipeline-scroll p-4 md:p-6 pb-8">
                 <div class="flex gap-4 h-full min-w-max">
@@ -772,33 +833,35 @@
                         var stageDeals = deals.filter(function (d) { return d.stage === stage.id; });
                         var totalAmount = stageDeals.reduce(function (sum, d) { return sum + (d.investmentAmount || 0); }, 0);
 
+                        var dropAttrs = readOnly ? '' : ' ondragover="window.dragOver(event)" ondragleave="window.dragLeave(event)" ondrop="window.dropDeal(event, \'' + stage.id + '\')"';
+
                         return `<div class="w-[280px] md:w-72 flex-shrink-0 flex flex-col bg-slate-100/30 rounded-xl border border-slate-200/60 overflow-hidden">
                             <div class="p-3 md:p-4 border-b border-slate-200/60 ${stage.headerBg}">
                                 <div class="flex items-center justify-between gap-2 mb-1">
                                     <h3 class="font-bold text-slate-800 text-xs md:text-sm leading-tight flex-1 min-w-0">${stage.name}</h3>
                                     <div class="flex items-center gap-1 flex-shrink-0">
                                         <span class="text-[10px] font-bold text-slate-500 bg-white/70 px-2 py-0.5 rounded-full">${stageDeals.length}</span>
-                                        <button
-                                            onclick="event.stopPropagation(); window.openNewDealModalWithStage('${stage.id}')"
-                                            class="w-6 h-6 rounded-md bg-white/80 hover:bg-amber-100 border border-slate-200 text-slate-500 hover:text-amber-700 flex items-center justify-center transition-colors"
-                                            title="Добавить сделку на этот этап"
-                                        >
-                                            <i class="fa-solid fa-plus text-[10px]"></i>
-                                        </button>
+                                        ${!readOnly ? `
+                                            <button
+                                                onclick="event.stopPropagation(); window.openNewDealModalWithStage('${stage.id}')"
+                                                class="w-6 h-6 rounded-md bg-white/80 hover:bg-amber-100 border border-slate-200 text-slate-500 hover:text-amber-700 flex items-center justify-center transition-colors"
+                                                title="Добавить сделку на этот этап"
+                                            >
+                                                <i class="fa-solid fa-plus text-[10px]"></i>
+                                            </button>
+                                        ` : ''}
                                     </div>
                                 </div>
                                 <p class="text-[10px] text-slate-600 font-medium">${formatMoney(totalAmount)}</p>
                             </div>
 
-                            <div class="flex-1 overflow-y-auto custom-scroll p-3 space-y-3"
-                                 ondragover="window.dragOver(event)"
-                                 ondragleave="window.dragLeave(event)"
-                                 ondrop="window.dropDeal(event, '${stage.id}')">
+                            <div class="flex-1 overflow-y-auto custom-scroll p-3 space-y-3" ${dropAttrs}>
                                 ${stageDeals.map(function (deal) {
                                     var manager = findUser(deal.managerId);
                                     var respManager = findUser(deal.responsibleManagerId);
                                     var st = dealTaskStatus(deal);
                                     var owner = isOwner(deal);
+                                    var canEdit = !readOnly && owner;
 
                                     var marker = st === 'overdue'
                                         ? '<span class="w-2.5 h-2.5 rounded-full bg-red-500 blink flex-shrink-0" title="Есть просроченная задача"></span>'
@@ -806,18 +869,24 @@
                                             ? '<span class="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0" title="Есть активные задачи"></span>'
                                             : '');
 
+                                    var dragAttrs = canEdit ? 'draggable="true" ondragstart="window.dragStart(event, \'' + deal.id + '\')" ondragend="window.dragEnd(event)"' : '';
+
                                     return `<div id="card-${deal.id}"
-                                            onclick="window.openDealModal('${deal.id}')"
-                                            ${owner ? 'draggable="true"' : ''}
-                                            ondragstart="window.dragStart(event, '${deal.id}')"
-                                            ondragend="window.dragEnd(event)"
-                                            class="group relative ${stage.cardBg} border-l-4 ${stage.cardBorder} ${stage.cardText} rounded-r-lg shadow-sm hover:shadow-md transition-all cursor-pointer p-3 md:p-4 fade-in ${owner ? 'cursor-grab active:cursor-grabbing' : ''}">
-                                        ${owner ? `
+                                            onclick="window.openDealModal('${deal.id}', ${readOnly})"
+                                            ${dragAttrs}
+                                            class="group relative ${stage.cardBg} border-l-4 ${stage.cardBorder} ${stage.cardText} rounded-r-lg shadow-sm hover:shadow-md transition-all cursor-pointer p-3 md:p-4 fade-in ${canEdit ? 'cursor-grab active:cursor-grabbing' : ''}">
+                                        ${canEdit ? `
                                             <button onclick="event.stopPropagation(); window.deleteDeal('${deal.id}')"
                                                     class="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-white shadow-sm hover:bg-red-50 text-slate-400 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100 z-10 border border-slate-100"
                                                     title="Удалить сделку">
                                                 <i class="fa-solid fa-trash text-xs"></i>
                                             </button>
+                                        ` : ''}
+
+                                        ${readOnly ? `
+                                            <div class="absolute top-2 right-2 text-slate-400/70" title="Только просмотр">
+                                                <i class="fa-solid fa-lock text-[10px]"></i>
+                                            </div>
                                         ` : ''}
 
                                         <h4 class="font-bold text-sm mb-2 leading-snug pr-8">${deal.businessName || deal.title}</h4>
@@ -1088,6 +1157,10 @@
             var popup = state.taskPopup;
             var deal = findDeal(popup.dealId);
             if (!deal || !deal.tasks[popup.taskIndex]) return;
+            if (deal.managerId !== state.currentUser.id) {
+                alert('Завершать задачи в чужих сделках запрещено');
+                return;
+            }
 
             state.taskPopup = null;
             var popupRoot = document.getElementById('task-popup-root');
@@ -1123,18 +1196,22 @@
             if (!state.taskPopup) return;
 
             var popup = state.taskPopup;
+            var deal = findDeal(popup.dealId);
+            if (!deal || !deal.tasks[popup.taskIndex]) return;
+            if (deal.managerId !== state.currentUser.id) {
+                alert('Переносить задачи в чужих сделках запрещено');
+                return;
+            }
+
             var newDate = new Date(input.value).toISOString();
 
             state.taskPopup = null;
             var popupRoot = document.getElementById('task-popup-root');
             if (popupRoot) popupRoot.remove();
 
-            var deal = findDeal(popup.dealId);
-            if (deal && deal.tasks[popup.taskIndex]) {
-                deal.tasks[popup.taskIndex].date = newDate;
-                deal.tasks[popup.taskIndex].done = false;
-                updateDealInDB(deal.id, { tasks: deal.tasks });
-            }
+            deal.tasks[popup.taskIndex].date = newDate;
+            deal.tasks[popup.taskIndex].done = false;
+            updateDealInDB(deal.id, { tasks: deal.tasks });
 
             render();
         };
@@ -1147,7 +1224,7 @@
             var popupRoot = document.getElementById('task-popup-root');
             if (popupRoot) popupRoot.remove();
 
-            window.openDealModal(dealId);
+            window.openDealModal(dealId, false);
         };
 
         function renderTaskPopup() {
@@ -1165,6 +1242,7 @@
             var bg = t.done ? 'bg-slate-100' : (isOverdue(t) ? 'bg-red-50' : 'bg-emerald-50');
             var badgeBg = t.done ? 'bg-slate-200 text-slate-700' : (isOverdue(t) ? 'bg-red-200 text-red-700' : 'bg-emerald-200 text-emerald-700');
             var badgeText = t.done ? 'Выполнена' : (isOverdue(t) ? 'Просрочена' : 'Активна');
+            var editable = deal.managerId === state.currentUser.id;
 
             var body = '';
 
@@ -1184,13 +1262,13 @@
                 </div>`;
             } else {
                 body = `<div class="grid grid-cols-3 gap-2">
-                    <button onclick="window.completeTaskFromPopup()" ${t.done ? 'disabled' : ''}
+                    <button onclick="window.completeTaskFromPopup()" ${(!editable || t.done) ? 'disabled' : ''}
                             class="px-3 py-3 rounded-lg bg-emerald-500 hover:bg-emerald-600 active:scale-95 text-white text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1 transition-transform">
                         <i class="fa-solid fa-check text-base"></i>
                         <span>Завершить</span>
                     </button>
-                    <button onclick="window.startReschedule()"
-                            class="px-3 py-3 rounded-lg bg-amber-500 hover:bg-amber-600 active:scale-95 text-white text-xs font-semibold flex flex-col items-center gap-1 transition-transform">
+                    <button onclick="window.startReschedule()" ${!editable ? 'disabled' : ''}
+                            class="px-3 py-3 rounded-lg bg-amber-500 hover:bg-amber-600 active:scale-95 text-white text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-1 transition-transform">
                         <i class="fa-solid fa-calendar-days text-base"></i>
                         <span>Перенести</span>
                     </button>
@@ -1210,6 +1288,7 @@
                             <div class="flex items-center gap-2 mb-2">
                                 <span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${badgeBg}">${badgeText}</span>
                                 <span class="text-[10px] text-slate-500"><i class="fa-regular fa-clock mr-1"></i>${formatDate(t.date)}</span>
+                                ${!editable ? '<span class="text-[9px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full uppercase">Чужая сделка</span>' : ''}
                             </div>
                             <h3 class="text-base font-bold text-slate-900 break-words">${t.text}</h3>
                             <button onclick="window.goToDealFromPopup()" class="mt-1 text-xs text-amber-600 hover:text-amber-700 font-semibold">
@@ -1478,6 +1557,7 @@
         };
 
         window.selectManager = function (userId) {
+            if (state.modalReadOnly) return;
             window.selectedRespManagerId = userId;
             var label = document.getElementById('resp-dropdown-label');
 
@@ -1503,6 +1583,7 @@
         window.openNewDealModal = function () {
             state.selectedDealId = null;
             state.modalOpen = true;
+            state.modalReadOnly = false;
             state.dealFiles = [];
             state.uploadingName = null;
             state.taskPopup = null;
@@ -1513,6 +1594,7 @@
         window.openNewDealModalWithStage = function (stageId) {
             state.selectedDealId = null;
             state.modalOpen = true;
+            state.modalReadOnly = false;
             state.dealFiles = [];
             state.uploadingName = null;
             state.taskPopup = null;
@@ -1520,9 +1602,10 @@
             render();
         };
 
-        window.openDealModal = function (id) {
+        window.openDealModal = function (id, readOnly) {
             state.selectedDealId = id;
             state.modalOpen = true;
+            state.modalReadOnly = !!readOnly;
             state.dealFiles = [];
             state.uploadingName = null;
             state.taskPopup = null;
@@ -1533,6 +1616,7 @@
 
         window.closeDealModal = function () {
             state.modalOpen = false;
+            state.modalReadOnly = false;
             state.selectedDealId = null;
             state.newDealStage = null;
 
@@ -1544,8 +1628,18 @@
 
         function renderModal() {
             var deal = state.selectedDealId ? findDeal(state.selectedDealId) : null;
+
+            if (state.selectedDealId && !deal) {
+                state.modalOpen = false;
+                state.modalReadOnly = false;
+                state.selectedDealId = null;
+                var staleRoot = document.getElementById('modal-root');
+                if (staleRoot) staleRoot.remove();
+                return;
+            }
+
             var isNew = !deal;
-            var owner = isOwner(deal);
+            var owner = !state.modalReadOnly && (isNew || (deal && deal.managerId === state.currentUser.id));
 
             var businessName = isNew ? '' : (deal.businessName || '');
             var businessDescription = isNew ? '' : (deal.businessDescription || '');
@@ -1842,27 +1936,33 @@
             var container = document.getElementById('contactsContainer');
             if (!container) return;
             var deal = state.selectedDealId ? findDeal(state.selectedDealId) : null;
+            var owner = !state.modalReadOnly && (!deal || deal.managerId === state.currentUser.id);
             container.innerHTML = window.tempContacts.map(function (c, i) {
-                return renderContactRow(c, i, isOwner(deal));
+                return renderContactRow(c, i, owner);
             }).join('');
         }
 
         window.addContactRow = function () {
+            if (state.modalReadOnly) return;
             window.tempContacts.push({ name: '', phone: '', email: '', telegram: '', max: '' });
             refreshContactsInModal();
         };
 
         window.removeContact = function (i) {
+            if (state.modalReadOnly) return;
             window.tempContacts.splice(i, 1);
             refreshContactsInModal();
         };
 
         window.addComment = function () {
+            if (state.modalReadOnly) return;
             var input = document.getElementById('m_comment');
             if (!input || !input.value.trim()) return;
 
             if (state.selectedDealId) {
                 var deal = findDeal(state.selectedDealId);
+                if (!deal || deal.managerId !== state.currentUser.id) return;
+
                 deal.comments.push({
                     text: input.value.trim(),
                     date: new Date().toISOString(),
@@ -1874,12 +1974,15 @@
         };
 
         window.addTask = function () {
+            if (state.modalReadOnly) return;
             var textInput = document.getElementById('m_task_text');
             var dateInput = document.getElementById('m_task_date');
             if (!textInput || !textInput.value.trim()) return;
 
             if (state.selectedDealId) {
                 var deal = findDeal(state.selectedDealId);
+                if (!deal || deal.managerId !== state.currentUser.id) return;
+
                 deal.tasks.push({
                     text: textInput.value.trim(),
                     done: false,
@@ -1891,9 +1994,10 @@
         };
 
         window.toggleTask = function (i) {
+            if (state.modalReadOnly) return;
             if (!state.selectedDealId) return;
             var deal = findDeal(state.selectedDealId);
-            if (!deal || !deal.tasks[i]) return;
+            if (!deal || !deal.tasks[i] || deal.managerId !== state.currentUser.id) return;
 
             deal.tasks[i].done = !deal.tasks[i].done;
             updateDealInDB(deal.id, { tasks: deal.tasks });
@@ -1901,9 +2005,10 @@
         };
 
         window.deleteTask = function (i) {
+            if (state.modalReadOnly) return;
             if (!state.selectedDealId) return;
             var deal = findDeal(state.selectedDealId);
-            if (!deal || !deal.tasks) return;
+            if (!deal || !deal.tasks || deal.managerId !== state.currentUser.id) return;
 
             deal.tasks.splice(i, 1);
             updateDealInDB(deal.id, { tasks: deal.tasks });
@@ -1911,6 +2016,8 @@
         };
 
         window.saveDeal = function () {
+            if (state.modalReadOnly) return;
+
             var businessNameEl = document.getElementById('m_businessName');
             var investmentAmountEl = document.getElementById('m_investmentAmount');
             var stageEl = document.getElementById('m_stage');
@@ -1948,6 +2055,12 @@
             });
 
             if (state.selectedDealId) {
+                var deal = findDeal(state.selectedDealId);
+                if (!deal || deal.managerId !== state.currentUser.id) {
+                    alert('Редактировать чужие сделки запрещено');
+                    return;
+                }
+
                 updateDealInDB(state.selectedDealId, {
                     businessName: businessName,
                     title: businessName,
@@ -1976,7 +2089,14 @@
         };
 
         window.deleteDeal = function (id) {
+            if (state.modalReadOnly) return;
             if (!confirm('Вы уверены, что хотите удалить эту сделку?')) return;
+
+            var deal = findDeal(id);
+            if (!deal || deal.managerId !== state.currentUser.id) {
+                alert('Удалять чужие сделки запрещено');
+                return;
+            }
 
             deleteDealFromDB(id);
 
@@ -1984,6 +2104,7 @@
             if (modalRoot) modalRoot.remove();
 
             state.modalOpen = false;
+            state.modalReadOnly = false;
             state.selectedDealId = null;
             state.newDealStage = null;
 
