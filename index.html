@@ -58,8 +58,7 @@
             box.textContent = 'Ошибка: ' + e.message + ' (строка ' + e.lineno + ')';
         });
 
-        var db = null;
-        var firebaseReady = false;
+        var db = null, auth = null, firebaseReady = false;
         try {
             if (typeof firebase !== 'undefined') {
                 var firebaseConfig = {
@@ -72,14 +71,13 @@
                 };
                 firebase.initializeApp(firebaseConfig);
                 db = firebase.firestore();
+                auth = firebase.auth();
                 firebaseReady = true;
                 console.log('Firebase готов');
             } else {
                 console.error('firebase SDK не найден. Проверь firebase-app.js и firebase-firestore.js');
             }
-        } catch (e) {
-            console.error('Ошибка инициализации Firebase:', e);
-        }
+        } catch (e) { console.error('Ошибка инициализации Firebase:', e); }
 
         var STAGES = [
             { id: 'new', name: 'Новый лид', cardBg: 'bg-slate-50', cardBorder: 'border-slate-400', cardText: 'text-slate-800', headerBg: 'bg-slate-100' },
@@ -97,18 +95,18 @@
         ];
 
         var STAGE_MIGRATION = { waiting_info: 'memo_sent', memorandum: 'memo_filled', audit_paid: 'audit' };
-        var KEY_CURRENT_USER_ID = 'new_current_user_id';
 
-        var ALL_MANAGERS = [
-            { id: 'u1', firstName: 'Денис', lastName: 'Алёхин' },
-            { id: 'u2', firstName: 'Игорь', lastName: 'Шилов' },
-            { id: 'u3', firstName: 'Александр', lastName: 'Игнатов' },
-            { id: 'u4', firstName: 'Евгений', lastName: 'Мартынов' },
-            { id: 'u5', firstName: 'Игит', lastName: 'Антонян' },
-            { id: 'u6', firstName: 'Ирина', lastName: 'Тараненко' },
-            { id: 'u7', firstName: 'Евгений', lastName: 'Богат' },
-            { id: 'u8', firstName: 'Игорь', lastName: 'Гордеев' }
+        // === ВПИШИ EMAIL === каждому партнёру его реальный email из Firebase Auth (Шаг 2)
+        var USERS = [
+            { email: 'damned13@list.ru',     firstName: 'Денис',    lastName: 'Алёхин' },
+            { email: '8888.ignatov@gmail.com', firstName: 'Александр',lastName: 'Игнатов' },
+            { email: 'irina@example.com',     firstName: 'Ирина',    lastName: 'Тараненко' },
+            { email: 'igor.gordeev.196@mail.ru',    firstName: 'Игорь',    lastName: 'Гордеев' }
+            { email: 'shilov60igor@yandex.ru',    firstName: 'Игорь',    lastName: 'Шилов' }
         ];
+
+        // === ВПИШИ EMAIL === те же email, что в правиле isAdmin() в Firestore Rules (кому доступна сводка)
+        var ADMIN_EMAILS = ['damned13@list.ru'];
 
         var MONTH_NAMES = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
         var WEEK_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -116,13 +114,15 @@
         var state = {
             currentUser: null,
             deals: [],
-            users: ALL_MANAGERS,
+            users: USERS,
             view: 'pipeline',
             modalOpen: false,
             modalReadOnly: false,
             selectedDealId: null,
             newDealStage: null,
             firebaseConnected: firebaseReady,
+            authLoading: true,
+            loginError: '',
             calYear: new Date().getFullYear(),
             calMonth: new Date().getMonth(),
             selectedDate: null,
@@ -154,13 +154,32 @@
             if (bytes < 1048576) return Math.round(bytes / 1024) + ' КБ';
             return (bytes / 1048576).toFixed(1) + ' МБ';
         }
-        function findUser(id) { return state.users.find(function (u) { return u.id === id; }) || null; }
+        function findUserByUid(uid) {
+            var me = state.currentUser;
+            if (me && me.uid === uid) return me;
+            return null;
+        }
         function findDeal(id) { return state.deals.find(function (d) { return d.id === id; }) || null; }
         function getUserLabel(user) { return user ? user.lastName + ' ' + user.firstName : 'Неизвестно'; }
-        function isOwner(deal) { return !deal || deal.managerId === state.currentUser.id; }
+        function labelForUid(uid) {
+            var me = state.currentUser;
+            if (me && me.uid === uid) return me.lastName + ' ' + me.firstName;
+            return 'Не назначен';
+        }
+        function initialsForUid(uid) {
+            var me = state.currentUser;
+            if (me && me.uid === uid) return me.firstName[0] + me.lastName[0];
+            return '?';
+        }
+        function isOwner(deal) { return !deal || deal.ownerUid === state.currentUser.uid; }
         function isMine(deal) {
             if (!state.currentUser) return false;
-            return deal.managerId === state.currentUser.id || deal.responsibleManagerId === state.currentUser.id;
+            var uid = state.currentUser.uid;
+            return deal.ownerUid === uid || deal.responsibleUid === uid;
+        }
+        function isAdminClient() {
+            if (!state.currentUser) return false;
+            return ADMIN_EMAILS.map(function (e) { return e.toLowerCase(); }).indexOf(state.currentUser.email.toLowerCase()) !== -1;
         }
         function isOverdue(t) { return t && t.date && !t.done && new Date(t.date).getTime() < Date.now(); }
 
@@ -182,7 +201,7 @@
         function getMyDeals() { return (state.deals || []).filter(function (d) { return isMine(d); }); }
         function getAllDeals() { return state.deals || []; }
         function getAnalyticsDeals() {
-            if (state.analyticsScope === 'mine') return (state.deals || []).filter(function (d) { return isMine(d); });
+            if (state.analyticsScope === 'mine' || !isAdminClient()) return (state.deals || []).filter(function (d) { return isMine(d); });
             return state.deals || [];
         }
         function stageOptionsHtml(selected) {
@@ -233,7 +252,7 @@
             if (state.modalReadOnly) return;
             if (!input.files || !input.files[0] || !state.selectedDealId) return;
             var deal = findDeal(state.selectedDealId);
-            if (!deal || deal.managerId !== state.currentUser.id) { alert('Редактировать чужие сделки запрещено'); return; }
+            if (!deal || deal.ownerUid !== state.currentUser.uid) { alert('Редактировать чужие сделки запрещено'); return; }
             var file = input.files[0];
             if (!db) { alert('Нет подключения к БД'); return; }
             if (file.size > 20 * 1024 * 1024) { alert('Файл больше 20 МБ. Используйте «Прикрепить ссылку».'); return; }
@@ -246,7 +265,7 @@
                     for (var i = 0; i < base64.length; i += CHUNK) chunks.push(base64.substr(i, CHUNK));
                     db.collection('files').add({ dealId: state.selectedDealId, name: file.name, size: file.size, type: file.type || '', chunkCount: chunks.length, external: false, createdAt: new Date().toISOString() })
                     .then(function (ref) {
-                        var writes = chunks.map(function (c, idx) { return db.collection('fileChunks').add({ fileId: ref.id, index: idx, data: c }); });
+                        var writes = chunks.map(function (c, idx) { return db.collection('fileChunks').add({ fileId: ref.id, dealId: state.selectedDealId, index: idx, data: c }); });
                         return Promise.all(writes);
                     }).then(function () { loadFiles(state.selectedDealId); })
                     .catch(function (err) { state.uploadingName = null; alert('Ошибка: ' + (err && err.message ? err.message : err)); renderModal(); });
@@ -281,7 +300,7 @@
             if (!confirm('Удалить файл?')) return;
             if (!db) return;
             var deal = findDeal(state.selectedDealId);
-            if (!deal || deal.managerId !== state.currentUser.id) { alert('Удалять файлы в чужих сделках запрещено'); return; }
+            if (!deal || deal.ownerUid !== state.currentUser.uid) { alert('Удалять файлы в чужих сделках запрещено'); return; }
             db.collection('fileChunks').where('fileId', '==', fileId).get().then(function (snap) {
                 var batch = db.batch();
                 snap.docs.forEach(function (d) { batch.delete(d.ref); });
@@ -294,7 +313,7 @@
             if (state.modalReadOnly) return;
             if (!state.selectedDealId || !db) return;
             var deal = findDeal(state.selectedDealId);
-            if (!deal || deal.managerId !== state.currentUser.id) { alert('Прикреплять ссылки в чужих сделках запрещено'); return; }
+            if (!deal || deal.ownerUid !== state.currentUser.uid) { alert('Прикреплять ссылки в чужих сделках запрещено'); return; }
             var url = prompt('Вставьте ссылку на файл:');
             if (!url || !url.trim()) return;
             var name = prompt('Название файла:', 'Внешний файл');
@@ -303,43 +322,98 @@
             .then(function () { loadFiles(state.selectedDealId); }).catch(function (e) { alert('Ошибка прикрепления'); });
         };
 
-        window.selectUser = function (userId) {
-            var user = ALL_MANAGERS.find(function (u) { return u.id === userId; });
-            if (!user) return;
-            state.currentUser = user;
-            localStorage.setItem(KEY_CURRENT_USER_ID, userId);
-            render();
-            if (firebaseReady && db) subscribeToDeals();
+        // ============ АВТОРИЗАЦИЯ (email + пароль) ============
+        window.doLogin = function () {
+            if (!auth) { setLoginError('Firebase не подключён'); return; }
+            var emailEl = document.getElementById('login-email');
+            var passEl = document.getElementById('login-pass');
+            if (!emailEl || !passEl) return;
+            var email = emailEl.value.trim();
+            var pass = passEl.value;
+            if (!email || !pass) { setLoginError('Введите email и пароль'); return; }
+            setLoginError('');
+            var btn = document.getElementById('login-submit');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Вход...'; }
+            auth.signInWithEmailAndPassword(email, pass).catch(function (err) {
+                var code = err && err.code ? err.code : '';
+                var msg = 'Неверный email или пароль';
+                if (code === 'auth/too-many-requests') msg = 'Слишком много попыток. Подожди минуту.';
+                else if (code === 'auth/network-request-failed') msg = 'Нет связи с сервером авторизации';
+                setLoginError(msg);
+                if (btn) { btn.disabled = false; btn.innerHTML = '<span>Войти в систему</span><i class="fa-solid fa-arrow-right"></i>'; }
+            });
         };
-        window.logout = function () {
-            state.currentUser = null; state.deals = []; state.taskPopup = null;
-            state.modalOpen = false; state.modalReadOnly = false; state.selectedDealId = null; state.newDealStage = null;
-            localStorage.removeItem(KEY_CURRENT_USER_ID);
-            var modalRoot = document.getElementById('modal-root'); if (modalRoot) modalRoot.remove();
-            var popupRoot = document.getElementById('task-popup-root'); if (popupRoot) popupRoot.remove();
-            render();
+        window.doLogout = function () { if (auth) auth.signOut(); };
+        window.doReset = function () {
+            if (!auth) return;
+            var emailEl = document.getElementById('login-email');
+            var email = emailEl ? emailEl.value.trim() : '';
+            if (!email) { setLoginError('Сначала введи email, потом нажми «Забыли пароль»'); return; }
+            auth.sendPasswordResetEmail(email).then(function () {
+                setLoginError('');
+                alert('Ссылка для сброса пароля отправлена на ' + email + '. Проверь почту (и спам).');
+            }).catch(function (err) {
+                setLoginError('Не удалось отправить ссылку: ' + (err && err.message ? err.message : err));
+            });
         };
+        function setLoginError(msg) {
+            state.loginError = msg || '';
+            var box = document.getElementById('login-error');
+            if (box) { box.textContent = state.loginError; box.style.display = state.loginError ? 'block' : 'none'; }
+        }
+
+        function onAuthStateChanged(user) {
+            state.authLoading = false;
+            if (user) {
+                var email = (user.email || '').toLowerCase();
+                var profile = USERS.find(function (u) { return u.email.toLowerCase() === email; });
+                state.currentUser = {
+                    uid: user.uid,
+                    email: user.email || '',
+                    firstName: profile ? profile.firstName : (user.displayName || 'Пользователь'),
+                    lastName: profile ? profile.lastName : ''
+                };
+                if (firebaseReady && db) subscribeToDeals();
+            } else {
+                state.currentUser = null;
+                state.deals = [];
+                state.modalOpen = false;
+                state.modalReadOnly = false;
+                state.selectedDealId = null;
+                state.taskPopup = null;
+                var modalRoot = document.getElementById('modal-root'); if (modalRoot) modalRoot.remove();
+                var popupRoot = document.getElementById('task-popup-root'); if (popupRoot) popupRoot.remove();
+            }
+            render();
+        }
 
         function renderLogin() {
+            var errBox = '<div id="login-error" style="display:' + (state.loginError ? 'block' : 'none') + '" class="mt-3 text-xs font-semibold text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">' + (state.loginError || '') + '</div>';
             return '<div class="h-screen w-full flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4">' +
                 '<div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md fade-in border border-white/10">' +
                 '<div class="text-center mb-8">' +
                 '<div class="w-16 h-16 bg-slate-900 rounded-xl mx-auto flex items-center justify-center mb-4 shadow-lg"><i class="fa-solid fa-gem text-amber-400 text-2xl"></i></div>' +
                 '<h1 class="text-2xl font-bold text-slate-900 tracking-tight">N.E.W. Invest CRM</h1>' +
-                '<p class="text-slate-500 text-sm mt-1">Система управления инвестиционными проектами</p></div>' +
-                '<div class="space-y-4"><div>' +
-                '<label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Выберите партнёра</label>' +
-                '<select id="loginUserSelect" class="w-full px-4 py-3 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 focus:ring-2 focus:ring-amber-400 focus:border-amber-400">' +
-                '<option value="">— Выберите —</option>' +
-                ALL_MANAGERS.map(function (m) { return '<option value="' + m.id + '">' + m.lastName + ' ' + m.firstName + '</option>'; }).join('') +
-                '</select></div>' +
-                '<button onclick="window.selectUser(document.getElementById(\'loginUserSelect\').value)" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-3 rounded-lg transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2">' +
-                '<span>Войти в систему</span><i class="fa-solid fa-arrow-right"></i></button></div></div></div>';
+                '<p class="text-slate-500 text-sm mt-1">Вход для партнёров</p></div>' +
+                '<div class="space-y-4">' +
+                '<div><label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Email</label>' +
+                '<input type="email" id="login-email" autocomplete="username" class="w-full px-4 py-3 rounded-lg border border-slate-200 bg-slate-50 text-slate-900" placeholder="you@company.com"></div>' +
+                '<div><label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Пароль</label>' +
+                '<input type="password" id="login-pass" autocomplete="current-password" onkeydown="if(event.key===\'Enter\') window.doLogin()" class="w-full px-4 py-3 rounded-lg border border-slate-200 bg-slate-50 text-slate-900" placeholder="••••••••"></div>' +
+                '<button id="login-submit" onclick="window.doLogin()" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-3 rounded-lg transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2">' +
+                '<span>Войти в систему</span><i class="fa-solid fa-arrow-right"></i></button>' +
+                '<button onclick="window.doReset()" class="w-full text-xs text-slate-400 hover:text-amber-600 transition-colors">Забыли пароль?</button>' +
+                errBox +
+                '</div></div></div>';
         }
 
         function render() {
             var app = document.getElementById('app');
             if (!app) return;
+            if (state.authLoading) {
+                app.innerHTML = '<div class="flex items-center justify-center h-screen bg-slate-50"><div class="text-center"><div class="animate-pulse flex flex-col items-center gap-4"><div class="w-12 h-12 bg-slate-200 rounded-xl"></div><p class="text-xs text-slate-400">Проверка входа...</p></div></div></div>';
+                return;
+            }
             if (!state.currentUser) { app.innerHTML = renderLogin(); return; }
             app.innerHTML = renderApp();
             if (state.view === 'analytics') setTimeout(initCharts, 100);
@@ -356,13 +430,14 @@
                 tasks: ['Мои задачи', 'Интерактивный календарь']
             };
             var title = titles[state.view];
-            var initials = state.currentUser.firstName[0] + state.currentUser.lastName[0];
+            var admin = isAdminClient();
+            var initials = state.currentUser.firstName[0] + (state.currentUser.lastName ? state.currentUser.lastName[0] : '');
             var cloudDot = state.firebaseConnected ? 'bg-emerald-500' : 'bg-red-500';
             var cloudText = state.firebaseConnected ? 'Облако подключено' : 'Нет связи';
 
             var navDesktop =
                 '<button onclick="window.setView(\'pipeline\')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ' + (state.view === 'pipeline' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50') + '"><i class="fa-solid fa-chart-column w-5"></i> Моя воронка</button>' +
-                '<button onclick="window.setView(\'allprojects\')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ' + (state.view === 'allprojects' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50') + '"><i class="fa-solid fa-layer-group w-5"></i> Все проекты</button>' +
+                (admin ? '<button onclick="window.setView(\'allprojects\')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ' + (state.view === 'allprojects' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50') + '"><i class="fa-solid fa-layer-group w-5"></i> Все проекты</button>' : '') +
                 '<button onclick="window.setView(\'tasks\')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ' + (state.view === 'tasks' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50') + '"><i class="fa-solid fa-calendar-check w-5"></i> Задачи</button>' +
                 '<button onclick="window.setView(\'analytics\')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ' + (state.view === 'analytics' ? 'bg-slate-900 text-white shadow-md' : 'text-slate-600 hover:bg-slate-50') + '"><i class="fa-solid fa-chart-pie w-5"></i> Аналитика</button>';
 
@@ -371,7 +446,7 @@
                 headerRight = '<button onclick="window.openNewDealModal()" class="bg-slate-900 hover:bg-slate-800 text-white px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-medium transition-all shadow-md hover:shadow-lg flex items-center gap-2"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Новая сделка</span><span class="sm:hidden">Новая</span></button>';
             } else if (state.view === 'allprojects') {
                 headerRight = '<span class="hidden md:inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-1 rounded-full"><i class="fa-solid fa-lock text-[9px]"></i> Только просмотр</span>';
-            } else if (state.view === 'analytics') {
+            } else if (state.view === 'analytics' && admin) {
                 headerRight = '<div class="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold">' +
                     '<button onclick="window.setAnalyticsScope(\'all\')" class="px-3 py-1.5 rounded-md transition-colors ' + (state.analyticsScope === 'all' ? 'bg-white shadow text-slate-900' : 'text-slate-500') + '"><i class="fa-solid fa-users mr-1"></i>Все менеджеры</button>' +
                     '<button onclick="window.setAnalyticsScope(\'mine\')" class="px-3 py-1.5 rounded-md transition-colors ' + (state.analyticsScope === 'mine' ? 'bg-white shadow text-slate-900' : 'text-slate-500') + '"><i class="fa-solid fa-user mr-1"></i>Только мои</button></div>';
@@ -392,9 +467,9 @@
                 '<div class="p-4 border-t border-slate-100 bg-slate-50/50">' +
                 '<div class="flex items-center gap-3 mb-3">' +
                 '<div class="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white font-bold text-sm shadow-sm flex-shrink-0">' + initials + '</div>' +
-                '<div class="flex-1 min-w-0"><p class="text-sm font-semibold text-slate-900 truncate">' + state.currentUser.firstName + ' ' + state.currentUser.lastName + '</p><p class="text-[10px] text-slate-400 uppercase tracking-wider">Партнёр</p></div></div>' +
+                '<div class="flex-1 min-w-0"><p class="text-sm font-semibold text-slate-900 truncate">' + state.currentUser.firstName + ' ' + state.currentUser.lastName + '</p><p class="text-[10px] text-slate-400 uppercase tracking-wider">' + (admin ? 'Админ' : 'Партнёр') + '</p></div></div>' +
                 '<div class="mb-3 flex items-center gap-1"><span class="w-2 h-2 rounded-full ' + cloudDot + '"></span><span class="text-[10px] text-slate-400">' + cloudText + '</span></div>' +
-                '<button onclick="window.logout()" class="w-full text-xs text-slate-500 hover:text-red-500 transition-colors flex items-center justify-center gap-1 py-2 rounded border border-slate-200 hover:bg-red-50"><i class="fa-solid fa-right-from-bracket"></i> Сменить партнёра</button></div></aside>' +
+                '<button onclick="window.doLogout()" class="w-full text-xs text-slate-500 hover:text-red-500 transition-colors flex items-center justify-center gap-1 py-2 rounded border border-slate-200 hover:bg-red-50"><i class="fa-solid fa-right-from-bracket"></i> Выйти</button></div></aside>' +
 
                 '<main class="flex-1 flex flex-col min-w-0">' +
                 '<header class="bg-white border-b border-slate-200 px-4 md:px-8 py-4 flex items-center justify-between shadow-sm z-10 gap-4 flex-shrink-0">' +
@@ -413,17 +488,18 @@
                 '<button onclick="window.toggleMobileMenu()" class="text-slate-400"><i class="fa-solid fa-xmark text-xl"></i></button></div>' +
                 '<nav class="flex-1 p-4 space-y-1">' +
                 '<button onclick="window.setView(\'pipeline\'); window.toggleMobileMenu();" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ' + (state.view === 'pipeline' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50') + '"><i class="fa-solid fa-chart-column w-5"></i> Моя воронка</button>' +
-                '<button onclick="window.setView(\'allprojects\'); window.toggleMobileMenu();" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ' + (state.view === 'allprojects' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50') + '"><i class="fa-solid fa-layer-group w-5"></i> Все проекты</button>' +
+                (admin ? '<button onclick="window.setView(\'allprojects\'); window.toggleMobileMenu();" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ' + (state.view === 'allprojects' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50') + '"><i class="fa-solid fa-layer-group w-5"></i> Все проекты</button>' : '') +
                 '<button onclick="window.setView(\'tasks\'); window.toggleMobileMenu();" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ' + (state.view === 'tasks' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50') + '"><i class="fa-solid fa-calendar-check w-5"></i> Задачи</button>' +
                 '<button onclick="window.setView(\'analytics\'); window.toggleMobileMenu();" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ' + (state.view === 'analytics' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50') + '"><i class="fa-solid fa-chart-pie w-5"></i> Аналитика</button></nav>' +
                 '<div class="p-4 border-t border-slate-100"><div class="flex items-center gap-3 mb-3">' +
                 '<div class="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white font-bold text-sm">' + initials + '</div>' +
                 '<div class="flex-1 min-w-0"><p class="text-sm font-semibold truncate">' + state.currentUser.firstName + ' ' + state.currentUser.lastName + '</p></div></div>' +
-                '<button onclick="window.logout()" class="w-full text-xs text-slate-500 hover:text-red-500 py-2 rounded border border-slate-200"><i class="fa-solid fa-right-from-bracket mr-1"></i>Сменить партнёра</button></div></div></div>';
+                '<button onclick="window.doLogout()" class="w-full text-xs text-slate-500 hover:text-red-500 py-2 rounded border border-slate-200"><i class="fa-solid fa-right-from-bracket mr-1"></i>Выйти</button></div></div></div>';
         }
 
         window.toggleMobileMenu = function () { var menu = document.getElementById('mobile-menu'); if (menu) menu.classList.toggle('hidden'); };
         window.setView = function (view) {
+            if (view === 'allprojects' && !isAdminClient()) view = 'pipeline';
             state.view = view; state.modalOpen = false; state.modalReadOnly = false; state.taskPopup = null; state.newDealStage = null;
             var modalRoot = document.getElementById('modal-root'); if (modalRoot) modalRoot.remove();
             var popupRoot = document.getElementById('task-popup-root'); if (popupRoot) popupRoot.remove();
@@ -434,7 +510,7 @@
         window.dragStart = function (e, id) {
             if (state.view === 'allprojects') { e.preventDefault(); return; }
             var deal = findDeal(id);
-            if (!deal || deal.managerId !== state.currentUser.id) { e.preventDefault(); return; }
+            if (!deal || deal.ownerUid !== state.currentUser.uid) { e.preventDefault(); return; }
             window.draggingDealId = id;
             try { e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move'; } catch (err) {}
             setTimeout(function () { var el = document.getElementById('card-' + id); if (el) el.classList.add('dragging'); }, 0);
@@ -458,7 +534,7 @@
             if (!id) { try { id = e.dataTransfer.getData('text/plain'); } catch (err) {} }
             if (!id) return;
             var deal = findDeal(id);
-            if (!deal || deal.managerId !== state.currentUser.id) return;
+            if (!deal || deal.ownerUid !== state.currentUser.uid) return;
             if (deal.stage === stageId) return;
             deal.stage = stageId;
             updateDealInDB(id, { stage: stageId });
@@ -475,8 +551,6 @@
                 var plusBtn = readOnly ? '' : '<button onclick="event.stopPropagation(); window.openNewDealModalWithStage(\'' + stage.id + '\')" class="w-6 h-6 rounded-md bg-white/80 hover:bg-amber-100 border border-slate-200 text-slate-500 hover:text-amber-700 flex items-center justify-center transition-colors" title="Добавить сделку на этот этап"><i class="fa-solid fa-plus text-[10px]"></i></button>';
 
                 var cards = stageDeals.map(function (deal) {
-                    var manager = findUser(deal.managerId);
-                    var respManager = findUser(deal.responsibleManagerId);
                     var st = dealTaskStatus(deal);
                     var owner = isOwner(deal);
                     var canEdit = !readOnly && owner;
@@ -484,13 +558,19 @@
                     var dragAttrs = canEdit ? 'draggable="true" ondragstart="window.dragStart(event, \'' + deal.id + '\')" ondragend="window.dragEnd(event)"' : '';
                     var delBtn = canEdit ? '<button onclick="event.stopPropagation(); window.deleteDeal(\'' + deal.id + '\')" class="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-white shadow-sm hover:bg-red-50 text-slate-400 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100 z-10 border border-slate-100" title="Удалить сделку"><i class="fa-solid fa-trash text-xs"></i></button>' : '';
                     var lockIcon = readOnly ? '<div class="absolute top-2 right-2 text-slate-400/70" title="Только просмотр"><i class="fa-solid fa-lock text-[10px]"></i></div>' : '';
-                    var respLine = respManager ? '<div class="flex items-center gap-2"><i class="fa-solid fa-user-tie text-[10px] opacity-50 w-4"></i><span class="text-[10px] opacity-70 truncate">' + respManager.lastName + ' ' + respManager.firstName + '</span></div>' : '<div class="flex items-center gap-2"><i class="fa-solid fa-user-slash text-[10px] opacity-30 w-4"></i><span class="text-[10px] opacity-40 italic">Не назначен</span></div>';
-                    var ownerLine = manager ? '<div class="flex items-center gap-2"><div class="w-5 h-5 rounded-full bg-black/10 flex items-center justify-center text-[9px] font-bold opacity-70 flex-shrink-0">' + manager.firstName[0] + manager.lastName[0] + '</div><span class="text-[10px] opacity-50 truncate">Владелец: ' + manager.lastName + ' ' + manager.firstName + '</span></div>' : '';
+                    var respLabel = deal.responsibleUid ? labelForUid(deal.responsibleUid) : 'Не назначен';
+                    var respIcon = deal.responsibleUid ? 'fa-user-tie' : 'fa-user-slash';
+                    var respOp = deal.responsibleUid ? 'opacity-70' : 'opacity-40 italic';
+                    var ownerLabel = deal.ownerUid ? labelForUid(deal.ownerUid) : 'Неизвестно';
+                    var ownerInit = deal.ownerUid ? initialsForUid(deal.ownerUid) : '?';
 
                     return '<div id="card-' + deal.id + '" onclick="window.openDealModal(\'' + deal.id + '\', ' + readOnly + ')" ' + dragAttrs + ' class="group relative ' + stage.cardBg + ' border-l-4 ' + stage.cardBorder + ' ' + stage.cardText + ' rounded-r-lg shadow-sm hover:shadow-md transition-all cursor-pointer p-3 md:p-4 fade-in ' + (canEdit ? 'cursor-grab active:cursor-grabbing' : '') + '">' + delBtn + lockIcon +
                         '<h4 class="font-bold text-sm mb-2 leading-snug pr-8">' + (deal.businessName || deal.title) + '</h4>' +
                         '<div class="flex items-center justify-between mb-2 gap-2"><span class="text-xs font-bold opacity-80">' + formatMoney(deal.investmentAmount) + '</span>' + marker + '</div>' +
-                        '<div class="pt-2 border-t border-black/5 flex flex-col gap-1">' + respLine + ownerLine + '</div></div>';
+                        '<div class="pt-2 border-t border-black/5 flex flex-col gap-1">' +
+                        '<div class="flex items-center gap-2"><i class="fa-solid ' + respIcon + ' text-[10px] opacity-50 w-4"></i><span class="text-[10px] ' + respOp + ' truncate">' + respLabel + '</span></div>' +
+                        '<div class="flex items-center gap-2"><div class="w-5 h-5 rounded-full bg-black/10 flex items-center justify-center text-[9px] font-bold opacity-70 flex-shrink-0">' + ownerInit + '</div><span class="text-[10px] opacity-50 truncate">Владелец: ' + ownerLabel + '</span></div>' +
+                        '</div></div>';
                 }).join('');
 
                 var empty = stageDeals.length === 0 ? '<div class="text-center py-8 text-slate-300 text-xs">Нет сделок</div>' : '';
@@ -597,7 +677,7 @@
             if (!state.taskPopup) return;
             var popup = state.taskPopup; var deal = findDeal(popup.dealId);
             if (!deal || !deal.tasks[popup.taskIndex]) return;
-            if (deal.managerId !== state.currentUser.id) { alert('Завершать задачи в чужих сделках запрещено'); return; }
+            if (deal.ownerUid !== state.currentUser.uid) { alert('Завершать задачи в чужих сделках запрещено'); return; }
             state.taskPopup = null;
             var popupRoot = document.getElementById('task-popup-root'); if (popupRoot) popupRoot.remove();
             deal.tasks[popup.taskIndex].done = true;
@@ -612,7 +692,7 @@
             if (!state.taskPopup) return;
             var popup = state.taskPopup; var deal = findDeal(popup.dealId);
             if (!deal || !deal.tasks[popup.taskIndex]) return;
-            if (deal.managerId !== state.currentUser.id) { alert('Переносить задачи в чужих сделках запрещено'); return; }
+            if (deal.ownerUid !== state.currentUser.uid) { alert('Переносить задачи в чужих сделках запрещено'); return; }
             var newDate = new Date(input.value).toISOString();
             state.taskPopup = null;
             var popupRoot = document.getElementById('task-popup-root'); if (popupRoot) popupRoot.remove();
@@ -636,7 +716,7 @@
             var bg = t.done ? 'bg-slate-100' : (isOverdue(t) ? 'bg-red-50' : 'bg-emerald-50');
             var badgeBg = t.done ? 'bg-slate-200 text-slate-700' : (isOverdue(t) ? 'bg-red-200 text-red-700' : 'bg-emerald-200 text-emerald-700');
             var badgeText = t.done ? 'Выполнена' : (isOverdue(t) ? 'Просрочена' : 'Активна');
-            var editable = deal.managerId === state.currentUser.id;
+            var editable = deal.ownerUid === state.currentUser.uid;
             var foreignBadge = editable ? '' : '<span class="text-[9px] font-bold text-red-600 bg-red-100 px-2 py-0.5 rounded-full uppercase">Чужая сделка</span>';
 
             var body;
@@ -667,34 +747,27 @@
             var div = document.createElement('div'); div.innerHTML = popupHTML; document.body.appendChild(div.firstElementChild);
         }
 
-        // ============ АНАЛИТИКА (устойчивая к копированию: нет кавычек внутри ${}) ============
         function renderAnalytics() {
             var deals = getAnalyticsDeals();
             var totalDeals = deals.length;
-
             var failedDealsArr = deals.filter(function (d) { return d.stage === 'failed'; });
             var failedDeals = failedDealsArr.length;
             var failedAmount = failedDealsArr.reduce(function (sum, d) { return sum + (d.investmentAmount || 0); }, 0);
-
             var totalInvestmentRaw = deals.reduce(function (sum, d) { return sum + (d.investmentAmount || 0); }, 0);
             var totalInvestment = totalInvestmentRaw - failedAmount;
-
             var fundedDealsArr = deals.filter(function (d) { return d.stage === 'funded'; });
             var fundedDeals = fundedDealsArr.length;
             var fundedAmount = fundedDealsArr.reduce(function (sum, d) { return sum + (d.investmentAmount || 0); }, 0);
-
             var auditReachedArr = deals.filter(function (d) { return d.stage === 'audit' || d.stage === 'funded'; });
             var auditReached = auditReachedArr.length;
-
             var conversionAudit = totalDeals > 0 ? ((auditReached / totalDeals) * 100).toFixed(1) : '0.0';
             var conversionFunded = totalDeals > 0 ? ((fundedDeals / totalDeals) * 100).toFixed(1) : '0.0';
-
-            var isMineScope = state.analyticsScope === 'mine';
+            var admin = isAdminClient();
+            var isMineScope = state.analyticsScope === 'mine' || !admin;
             var scopeLabel = isMineScope ? 'Моя статистика' : 'Общая статистика команды';
             var scopeIconWrap = isMineScope ? 'bg-amber-50' : 'bg-slate-900';
             var scopeIconColor = isMineScope ? 'text-amber-500' : 'text-white';
             var scopeIconName = isMineScope ? 'fa-user' : 'fa-users';
-
             var totalStr = formatMoney(totalInvestment);
             var failedStr = formatMoney(failedAmount);
             var fundedStr = formatMoney(fundedAmount);
@@ -705,51 +778,18 @@
                 '<div class="w-10 h-10 rounded-lg ' + scopeIconWrap + ' flex items-center justify-center"><i class="fa-solid ' + scopeIconName + ' ' + scopeIconColor + '"></i></div>' +
                 '<div><h3 class="font-bold text-slate-900">' + scopeLabel + '</h3>' +
                 '<p class="text-xs text-slate-400">Показано сделок: <span class="font-semibold text-slate-700">' + totalDeals + '</span> из <span class="font-semibold text-slate-700">' + state.deals.length + '</span></p></div></div></div>' +
-
                 '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">' +
-
-                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm">' +
-                '<div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-blue-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-briefcase text-blue-500 text-sm md:text-base"></i></div>' +
-                '<p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Всего сделок</p>' +
-                '<p class="text-xl md:text-3xl font-bold text-slate-900 mt-1">' + totalDeals + '</p>' +
-                '<p class="text-[10px] text-slate-400 mt-1">Факапов: <span class="font-semibold text-red-600">' + failedDeals + '</span></p></div>' +
-
-                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm">' +
-                '<div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-amber-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-coins text-amber-500 text-sm md:text-base"></i></div>' +
-                '<p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Общий объём без факапов</p>' +
-                '<p class="text-sm md:text-2xl font-bold text-slate-900 mt-1 truncate" title="' + totalStr + '">' + totalStr + '</p>' +
-                '<p class="text-[10px] text-slate-400 mt-1">Исключено факапов: <span class="font-semibold text-red-600">' + failedStr + '</span></p></div>' +
-
-                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm">' +
-                '<div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-emerald-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-check-circle text-emerald-500 text-sm md:text-base"></i></div>' +
-                '<p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Получено</p>' +
-                '<p class="text-sm md:text-2xl font-bold text-emerald-600 mt-1 truncate" title="' + fundedStr + '">' + fundedStr + '</p>' +
-                '<p class="text-[10px] text-slate-400 mt-1">Успешных сделок: <span class="font-semibold text-emerald-600">' + fundedDeals + '</span></p></div>' +
-
-                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm">' +
-                '<div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-indigo-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-magnifying-glass-chart text-indigo-500 text-sm md:text-base"></i></div>' +
-                '<p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Конверсия в аудит</p>' +
-                '<p class="text-xl md:text-3xl font-bold text-slate-900 mt-1">' + conversionAudit + '%</p>' +
-                '<p class="text-[10px] text-slate-400 mt-1">Дошли до аудита: <span class="font-semibold text-indigo-600">' + auditReached + '</span> из ' + totalDeals + '</p></div>' +
-
-                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm">' +
-                '<div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-emerald-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-percent text-emerald-500 text-sm md:text-base"></i></div>' +
-                '<p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Конверсия в инвестиции</p>' +
-                '<p class="text-xl md:text-3xl font-bold text-slate-900 mt-1">' + conversionFunded + '%</p>' +
-                '<p class="text-[10px] text-slate-400 mt-1">Инвестиции получены: <span class="font-semibold text-emerald-600">' + fundedDeals + '</span> из ' + totalDeals + '</p></div>' +
-
-                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm">' +
-                '<div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-red-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-circle-xmark text-red-500 text-sm md:text-base"></i></div>' +
-                '<p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Провалено</p>' +
-                '<p class="text-xl md:text-3xl font-bold text-slate-900 mt-1">' + failedDeals + '</p>' +
-                '<p class="text-[10px] text-slate-400 mt-1">Сумма факапов: <span class="font-semibold text-red-600">' + failedStr + '</span></p></div>' +
-
+                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-blue-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-briefcase text-blue-500 text-sm md:text-base"></i></div><p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Всего сделок</p><p class="text-xl md:text-3xl font-bold text-slate-900 mt-1">' + totalDeals + '</p><p class="text-[10px] text-slate-400 mt-1">Факапов: <span class="font-semibold text-red-600">' + failedDeals + '</span></p></div>' +
+                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-amber-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-coins text-amber-500 text-sm md:text-base"></i></div><p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Общий объём без факапов</p><p class="text-sm md:text-2xl font-bold text-slate-900 mt-1 truncate" title="' + totalStr + '">' + totalStr + '</p><p class="text-[10px] text-slate-400 mt-1">Исключено факапов: <span class="font-semibold text-red-600">' + failedStr + '</span></p></div>' +
+                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-emerald-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-check-circle text-emerald-500 text-sm md:text-base"></i></div><p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Получено</p><p class="text-sm md:text-2xl font-bold text-emerald-600 mt-1 truncate" title="' + fundedStr + '">' + fundedStr + '</p><p class="text-[10px] text-slate-400 mt-1">Успешных сделок: <span class="font-semibold text-emerald-600">' + fundedDeals + '</span></p></div>' +
+                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-indigo-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-magnifying-glass-chart text-indigo-500 text-sm md:text-base"></i></div><p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Конверсия в аудит</p><p class="text-xl md:text-3xl font-bold text-slate-900 mt-1">' + conversionAudit + '%</p><p class="text-[10px] text-slate-400 mt-1">Дошли до аудита: <span class="font-semibold text-indigo-600">' + auditReached + '</span> из ' + totalDeals + '</p></div>' +
+                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-emerald-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-percent text-emerald-500 text-sm md:text-base"></i></div><p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Конверсия в инвестиции</p><p class="text-xl md:text-3xl font-bold text-slate-900 mt-1">' + conversionFunded + '%</p><p class="text-[10px] text-slate-400 mt-1">Инвестиции получены: <span class="font-semibold text-emerald-600">' + fundedDeals + '</span> из ' + totalDeals + '</p></div>' +
+                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-red-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid fa-circle-xmark text-red-500 text-sm md:text-base"></i></div><p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">Провалено</p><p class="text-xl md:text-3xl font-bold text-slate-900 mt-1">' + failedDeals + '</p><p class="text-[10px] text-slate-400 mt-1">Сумма факапов: <span class="font-semibold text-red-600">' + failedStr + '</span></p></div>' +
                 '</div>' +
-
                 '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">' +
                 '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><h3 class="font-bold text-slate-900 mb-4 text-sm md:text-base">Распределение по этапам</h3><div class="h-64 md:h-72"><canvas id="chartStages"></canvas></div></div>' +
                 '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><h3 class="font-bold text-slate-900 mb-4 text-sm md:text-base">Объём инвестиций (млн €)</h3><div class="h-64 md:h-72"><canvas id="chartAmounts"></canvas></div></div>' +
-                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm lg:col-span-2"><h3 class="font-bold text-slate-900 mb-4 text-sm md:text-base">Эффективность менеджеров</h3><div class="h-64 md:h-72"><canvas id="chartManagers"></canvas></div></div>' +
+                '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm lg:col-span-2"><h3 class="font-bold text-slate-900 mb-4 text-sm md:text-base">' + (admin ? 'Эффективность менеджеров' : 'Моя эффективность') + '</h3><div class="h-64 md:h-72"><canvas id="chartManagers"></canvas></div></div>' +
                 '</div></div>';
         }
 
@@ -766,20 +806,28 @@
             if (document.getElementById('chartStages')) new Chart(document.getElementById('chartStages'), { type: 'bar', data: { labels: stageLabels, datasets: [{ label: 'Кол-во', data: stageCounts, backgroundColor: stageColors, borderRadius: 6, borderSkipped: false }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 }, grid: { color: '#f1f5f9' } }, x: { grid: { display: false }, ticks: { font: { size: 10 } } } } } });
             if (document.getElementById('chartAmounts')) new Chart(document.getElementById('chartAmounts'), { type: 'line', data: { labels: stageLabels, datasets: [{ label: 'Млн €', data: stageAmounts, borderColor: '#d4af37', backgroundColor: 'rgba(212, 175, 55, 0.1)', fill: true, tension: 0.4, pointBackgroundColor: '#d4af37', pointRadius: 4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: '#f1f5f9' } }, x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } } } } });
             if (document.getElementById('chartManagers')) {
-                var managerLabels = state.users.map(function (m) { return m.lastName + ' ' + m.firstName; });
-                var managerFunded = state.users.map(function (m) { return deals.filter(function (d) { return d.managerId === m.id && d.stage === 'funded'; }).reduce(function (s, d) { return s + (d.investmentAmount || 0); }, 0) / 1000000; });
-                var managerFailed = state.users.map(function (m) { return deals.filter(function (d) { return d.managerId === m.id && d.stage === 'failed'; }).length; });
-                new Chart(document.getElementById('chartManagers'), { type: 'bar', data: { labels: managerLabels, datasets: [{ label: 'Получено (млн €)', data: managerFunded, backgroundColor: '#10b981', borderRadius: 6, yAxisID: 'y' }, { label: 'Провалено', data: managerFailed, backgroundColor: '#ef4444', borderRadius: 6, yAxisID: 'y1' }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { type: 'linear', display: true, position: 'left', grid: { color: '#f1f5f9' }, title: { display: true, text: 'Млн €' } }, y1: { type: 'linear', display: true, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'Кол-во' } }, x: { grid: { display: false } } } } });
+                var admin = isAdminClient();
+                if (admin) {
+                    var managerLabels = USERS.map(function (m) { return m.lastName + ' ' + m.firstName; });
+                    var managerFunded = USERS.map(function (m) { return deals.filter(function (d) { return d.ownerEmail && d.ownerEmail.toLowerCase() === m.email.toLowerCase() && d.stage === 'funded'; }).reduce(function (s, d) { return s + (d.investmentAmount || 0); }, 0) / 1000000; });
+                    var managerFailed = USERS.map(function (m) { return deals.filter(function (d) { return d.ownerEmail && d.ownerEmail.toLowerCase() === m.email.toLowerCase() && d.stage === 'failed'; }).length; });
+                    new Chart(document.getElementById('chartManagers'), { type: 'bar', data: { labels: managerLabels, datasets: [{ label: 'Получено (млн €)', data: managerFunded, backgroundColor: '#10b981', borderRadius: 6, yAxisID: 'y' }, { label: 'Провалено', data: managerFailed, backgroundColor: '#ef4444', borderRadius: 6, yAxisID: 'y1' }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { type: 'linear', display: true, position: 'left', grid: { color: '#f1f5f9' }, title: { display: true, text: 'Млн €' } }, y1: { type: 'linear', display: true, position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: 'Кол-во' } }, x: { grid: { display: false } } } } });
+                } else {
+                    var funded = deals.filter(function (d) { return d.stage === 'funded'; }).reduce(function (s, d) { return s + (d.investmentAmount || 0); }, 0) / 1000000;
+                    var failed = deals.filter(function (d) { return d.stage === 'failed'; }).length;
+                    var active = deals.filter(function (d) { return d.stage !== 'funded' && d.stage !== 'failed'; }).length;
+                    new Chart(document.getElementById('chartManagers'), { type: 'bar', data: { labels: ['Получено (млн €)', 'В работе', 'Провалено'], datasets: [{ label: 'Моя статистика', data: [funded, active, failed], backgroundColor: ['#10b981', '#f59e0b', '#ef4444'], borderRadius: 6 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: '#f1f5f9' } }, x: { grid: { display: false } } } } });
+                }
             }
         }
 
         window.toggleDropdown = function () { var dd = document.getElementById('resp-dropdown-menu'); if (dd) dd.classList.toggle('hidden'); };
-        window.selectManager = function (userId) {
+        window.selectManager = function (uid) {
             if (state.modalReadOnly) return;
-            window.selectedRespManagerId = userId;
+            window.selectedRespManagerUid = uid;
             var label = document.getElementById('resp-dropdown-label');
-            if (userId === '') { if (label) label.innerHTML = '<span class="text-slate-400">Не назначен</span>'; }
-            else { var u = findUser(userId); if (label && u) label.innerHTML = '<span class="text-slate-900">' + u.lastName + ' ' + u.firstName + '</span>'; }
+            if (uid === '') { if (label) label.innerHTML = '<span class="text-slate-400">Не назначен</span>'; }
+            else { if (label) label.innerHTML = '<span class="text-slate-900">' + labelForUid(uid) + '</span>'; }
             var dd = document.getElementById('resp-dropdown-menu'); if (dd) dd.classList.add('hidden');
         };
         window.closeDropdownOnOutside = function (e) {
@@ -795,24 +843,22 @@
             var deal = state.selectedDealId ? findDeal(state.selectedDealId) : null;
             if (state.selectedDealId && !deal) { state.modalOpen = false; state.modalReadOnly = false; state.selectedDealId = null; var staleRoot = document.getElementById('modal-root'); if (staleRoot) staleRoot.remove(); return; }
             var isNew = !deal;
-            var owner = !state.modalReadOnly && (isNew || (deal && deal.managerId === state.currentUser.id));
+            var owner = !state.modalReadOnly && (isNew || (deal && deal.ownerUid === state.currentUser.uid));
             var businessName = isNew ? '' : (deal.businessName || '');
             var businessDescription = isNew ? '' : (deal.businessDescription || '');
             var investmentAmount = isNew ? '' : (deal.investmentAmount || '');
-            var responsibleManagerId = isNew ? state.currentUser.id : (deal.responsibleManagerId || '');
+            var responsibleUid = isNew ? state.currentUser.uid : (deal.responsibleUid || '');
             var stage = isNew ? (state.newDealStage || 'new') : (deal.stage || 'new');
             var contacts = isNew ? [] : (deal.contacts || []);
             var comments = isNew ? [] : (deal.comments || []);
             var tasks = isNew ? [] : (deal.tasks || []);
             var files = state.dealFiles || [];
-            var ownerUser = findUser(isNew ? state.currentUser.id : deal.managerId);
+            var ownerLabel = isNew ? (state.currentUser.firstName + ' ' + state.currentUser.lastName) : (deal.ownerUid ? labelForUid(deal.ownerUid) : 'Неизвестно');
             window.tempContacts = isNew ? [{ name: '', phone: '', email: '', telegram: '', max: '' }] : JSON.parse(JSON.stringify(contacts));
-            window.selectedRespManagerId = responsibleManagerId;
-            var respUser = findUser(responsibleManagerId);
-            var respLabel = respUser ? respUser.lastName + ' ' + respUser.firstName : 'Не назначен';
+            window.selectedRespManagerUid = responsibleUid;
+            var respLabel = responsibleUid ? labelForUid(responsibleUid) : 'Не назначен';
             var stageObj = STAGES.find(function (s) { return s.id === stage; }) || STAGES[0];
             var viewBadge = owner ? '' : '<span class="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded font-bold uppercase tracking-wider"><i class="fa-solid fa-lock mr-1"></i>Только просмотр</span>';
-            var ownerLabel = ownerUser ? getUserLabel(ownerUser) : 'Неизвестно';
 
             var filesListHtml = files.map(function (f) {
                 var delBtn = owner ? '<button onclick="event.stopPropagation(); window.deleteFileDoc(\'' + f.id + '\')" class="text-slate-300 hover:text-red-500 flex-shrink-0"><i class="fa-solid fa-trash text-xs"></i></button>' : '';
@@ -846,15 +892,21 @@
             var fileZone = owner ? '<div class="space-y-2"><div class="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center hover:border-amber-400 transition-colors cursor-pointer" onclick="document.getElementById(\'m_file\').click()"><i class="fa-solid fa-cloud-arrow-up text-slate-300 text-xl mb-1"></i><p class="text-[10px] text-slate-400">Загрузить файл (до 20 МБ)</p><input type="file" id="m_file" class="hidden" onchange="window.handleFileUpload(this)"></div><button onclick="window.attachLink()" class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-2"><i class="fa-solid fa-link"></i> Прикрепить ссылку (Яндекс.Диск и др.)</button></div>' : '';
             var newFileHint = isNew ? '<p class="text-[10px] text-slate-400 italic">Файлы можно прикрепить после создания сделки</p>' : '';
 
-            var managerOptions = state.users.map(function (m) {
-                var sel = responsibleManagerId === m.id ? 'bg-amber-50' : '';
-                var check = responsibleManagerId === m.id ? '<i class="fa-solid fa-check text-amber-500"></i>' : '';
-                return '<button type="button" onclick="window.selectManager(\'' + m.id + '\')" class="w-full text-left px-3 py-2.5 text-sm hover:bg-slate-50 transition-colors flex items-center justify-between border-b border-slate-50 last:border-b-0 ' + sel + '">' +
-                    '<div class="flex items-center gap-2"><div class="w-6 h-6 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">' + m.firstName[0] + m.lastName[0] + '</div>' +
-                    '<span class="text-slate-900 font-medium">' + m.lastName + ' ' + m.firstName + '</span></div>' + check + '</button>';
+            var managerOptions = USERS.map(function (m) {
+                var sel = responsibleUid && m.email.toLowerCase() === (deal && deal.responsibleEmail ? deal.responsibleEmail.toLowerCase() : '') ? '' : '';
+                return '';
             }).join('');
-            var respCheck = responsibleManagerId === '' ? '<i class="fa-solid fa-check text-amber-500"></i>' : '';
-            var respSpanCls = responsibleManagerId === '' ? 'text-slate-400' : 'text-slate-900';
+            // dropdown по uid: список = текущий пользователь + все известные из сделок? Проще: все USERS + себя.
+            // Но uid мы знаем только для себя и для тех, кого встретили в данных. Для выбора ответственного даём список USERS,
+            // а значение храним как email->резолвим в uid нельзя (uid чужих не знаем на клиенте).
+            // Решение: ответствен выбирается по email, а в документ пишем responsibleEmail; серверное правило uses responsibleUid.
+            // Чтобы правило работало, при создании/редактировании резолвим email->uid невозможно на клиенте для чужих.
+            // Поэтому: ответствен = либо я (uid известен), либо "не назначен". Для назначения другого — см. примечание ниже.
+            var respOptions = '<button type="button" onclick="window.selectManager(\'\')" class="w-full text-left px-3 py-2.5 text-sm hover:bg-slate-50 transition-colors flex items-center justify-between border-b border-slate-50"><span class="text-slate-600">Не назначен</span>' + (responsibleUid === '' ? '<i class="fa-solid fa-check text-amber-500"></i>' : '') + '</button>' +
+                '<button type="button" onclick="window.selectManager(\'' + state.currentUser.uid + '\')" class="w-full text-left px-3 py-2.5 text-sm hover:bg-slate-50 transition-colors flex items-center justify-between border-b border-slate-50 last:border-b-0 ' + (responsibleUid === state.currentUser.uid ? 'bg-amber-50' : '') + '">' +
+                '<div class="flex items-center gap-2"><div class="w-6 h-6 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">' + state.currentUser.firstName[0] + (state.currentUser.lastName ? state.currentUser.lastName[0] : '') + '</div>' +
+                '<span class="text-slate-900 font-medium">' + state.currentUser.lastName + ' ' + state.currentUser.firstName + ' (я)</span></div>' + (responsibleUid === state.currentUser.uid ? '<i class="fa-solid fa-check text-amber-500"></i>' : '') + '</button>';
+            var respSpanCls = responsibleUid === '' ? 'text-slate-400' : 'text-slate-900';
 
             var commentsHtml = comments.map(function (c) {
                 return '<div class="bg-slate-50 rounded-lg p-3 border border-slate-100"><div class="flex items-center justify-between mb-1"><span class="text-xs font-bold text-slate-700">' + (c.author || 'Неизвестно') + '</span><span class="text-[10px] text-slate-400">' + formatDate(c.date) + '</span></div><p class="text-sm text-slate-600 break-words">' + c.text + '</p></div>';
@@ -883,9 +935,7 @@
                 '<div class="md:col-span-2 relative"><label class="block text-xs font-semibold text-slate-500 mb-1">Ответственный менеджер *</label>' +
                 '<button type="button" id="resp-dropdown-btn" onclick="window.toggleDropdown()" ' + (!owner ? 'disabled' : '') + ' class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-left flex items-center justify-between disabled:opacity-50 disabled:bg-slate-100 cursor-pointer hover:bg-slate-100 transition-colors">' +
                 '<span id="resp-dropdown-label"><span class="' + respSpanCls + '">' + respLabel + '</span></span><i class="fa-solid fa-chevron-down text-slate-400 text-xs"></i></button>' +
-                '<div id="resp-dropdown-menu" class="hidden absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 dropdown-menu max-h-60 overflow-y-auto custom-scroll">' +
-                '<button type="button" onclick="window.selectManager(\'\')" class="w-full text-left px-3 py-2.5 text-sm hover:bg-slate-50 transition-colors flex items-center justify-between border-b border-slate-50"><span class="text-slate-600">Не назначен</span>' + respCheck + '</button>' +
-                managerOptions + '</div></div>' +
+                '<div id="resp-dropdown-menu" class="hidden absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 dropdown-menu max-h-60 overflow-y-auto custom-scroll">' + respOptions + '</div></div>' +
                 '<div class="md:col-span-2"><label class="block text-xs font-semibold text-slate-500 mb-1">Описание бизнеса</label><textarea id="m_businessDescription" rows="3" ' + (!owner ? 'disabled' : '') + ' class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 disabled:opacity-50 disabled:bg-slate-100" placeholder="Сфера деятельности...">' + businessDescription + '</textarea></div>' +
                 '<div class="md:col-span-2"><label class="block text-xs font-semibold text-slate-500 mb-1">Сумма инвестиций (€) *</label><input type="number" id="m_investmentAmount" value="' + investmentAmount + '" ' + (!owner ? 'disabled' : '') + ' class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-900 disabled:opacity-50 disabled:bg-slate-100" placeholder="1000000"></div>' +
                 '</div></div>' +
@@ -927,7 +977,7 @@
         function refreshContactsInModal() {
             var container = document.getElementById('contactsContainer'); if (!container) return;
             var deal = state.selectedDealId ? findDeal(state.selectedDealId) : null;
-            var owner = !state.modalReadOnly && (!deal || deal.managerId === state.currentUser.id);
+            var owner = !state.modalReadOnly && (!deal || deal.ownerUid === state.currentUser.uid);
             container.innerHTML = window.tempContacts.map(function (c, i) { return renderContactRow(c, i, owner); }).join('');
         }
         window.addContactRow = function () { if (state.modalReadOnly) return; window.tempContacts.push({ name: '', phone: '', email: '', telegram: '', max: '' }); refreshContactsInModal(); };
@@ -937,7 +987,7 @@
             var input = document.getElementById('m_comment'); if (!input || !input.value.trim()) return;
             if (state.selectedDealId) {
                 var deal = findDeal(state.selectedDealId);
-                if (!deal || deal.managerId !== state.currentUser.id) return;
+                if (!deal || deal.ownerUid !== state.currentUser.uid) return;
                 deal.comments.push({ text: input.value.trim(), date: new Date().toISOString(), author: state.currentUser.lastName + ' ' + state.currentUser.firstName });
                 updateDealInDB(deal.id, { comments: deal.comments });
                 renderModal();
@@ -949,7 +999,7 @@
             if (!textInput || !textInput.value.trim()) return;
             if (state.selectedDealId) {
                 var deal = findDeal(state.selectedDealId);
-                if (!deal || deal.managerId !== state.currentUser.id) return;
+                if (!deal || deal.ownerUid !== state.currentUser.uid) return;
                 deal.tasks.push({ text: textInput.value.trim(), done: false, date: dateInput && dateInput.value ? new Date(dateInput.value).toISOString() : new Date().toISOString() });
                 updateDealInDB(deal.id, { tasks: deal.tasks });
                 renderModal();
@@ -959,7 +1009,7 @@
             if (state.modalReadOnly) return;
             if (!state.selectedDealId) return;
             var deal = findDeal(state.selectedDealId);
-            if (!deal || !deal.tasks[i] || deal.managerId !== state.currentUser.id) return;
+            if (!deal || !deal.tasks[i] || deal.ownerUid !== state.currentUser.uid) return;
             deal.tasks[i].done = !deal.tasks[i].done;
             updateDealInDB(deal.id, { tasks: deal.tasks });
             renderModal();
@@ -968,7 +1018,7 @@
             if (state.modalReadOnly) return;
             if (!state.selectedDealId) return;
             var deal = findDeal(state.selectedDealId);
-            if (!deal || !deal.tasks || deal.managerId !== state.currentUser.id) return;
+            if (!deal || !deal.tasks || deal.ownerUid !== state.currentUser.uid) return;
             deal.tasks.splice(i, 1);
             updateDealInDB(deal.id, { tasks: deal.tasks });
             renderModal();
@@ -984,7 +1034,7 @@
             var investmentAmount = parseFloat(investmentAmountEl.value);
             var stage = stageEl.value;
             var businessDescription = businessDescriptionEl ? businessDescriptionEl.value.trim() : '';
-            var responsibleManagerId = window.selectedRespManagerId || '';
+            var responsibleUid = window.selectedRespManagerUid || '';
             if (!businessName || isNaN(investmentAmount) || investmentAmount <= 0) { alert('Заполните название компании и сумму инвестиций'); return; }
             var contacts = window.tempContacts.map(function (_, i) {
                 var nameEl = document.getElementById('c_name_' + i); var phoneEl = document.getElementById('c_phone_' + i);
@@ -993,10 +1043,10 @@
             }).filter(function (c) { return c.name || c.phone || c.email; });
             if (state.selectedDealId) {
                 var deal = findDeal(state.selectedDealId);
-                if (!deal || deal.managerId !== state.currentUser.id) { alert('Редактировать чужие сделки запрещено'); return; }
-                updateDealInDB(state.selectedDealId, { businessName: businessName, title: businessName, businessDescription: businessDescription, investmentAmount: investmentAmount, responsibleManagerId: responsibleManagerId, stage: stage, contacts: contacts });
+                if (!deal || deal.ownerUid !== state.currentUser.uid) { alert('Редактировать чужие сделки запрещено'); return; }
+                updateDealInDB(state.selectedDealId, { businessName: businessName, title: businessName, businessDescription: businessDescription, investmentAmount: investmentAmount, responsibleUid: responsibleUid, stage: stage, contacts: contacts });
             } else {
-                saveDealToDB({ title: businessName, managerId: state.currentUser.id, responsibleManagerId: responsibleManagerId, stage: stage, businessName: businessName, businessDescription: businessDescription, investmentAmount: investmentAmount, contacts: contacts, comments: [], tasks: [] });
+                saveDealToDB({ title: businessName, ownerUid: state.currentUser.uid, ownerEmail: state.currentUser.email, responsibleUid: responsibleUid, stage: stage, businessName: businessName, businessDescription: businessDescription, investmentAmount: investmentAmount, contacts: contacts, comments: [], tasks: [] });
             }
             window.closeDealModal();
         };
@@ -1004,7 +1054,7 @@
             if (state.modalReadOnly) return;
             if (!confirm('Вы уверены, что хотите удалить эту сделку?')) return;
             var deal = findDeal(id);
-            if (!deal || deal.managerId !== state.currentUser.id) { alert('Удалять чужие сделки запрещено'); return; }
+            if (!deal || deal.ownerUid !== state.currentUser.uid) { alert('Удалять чужие сделки запрещено'); return; }
             deleteDealFromDB(id);
             var modalRoot = document.getElementById('modal-root'); if (modalRoot) modalRoot.remove();
             state.modalOpen = false; state.modalReadOnly = false; state.selectedDealId = null; state.newDealStage = null;
@@ -1012,12 +1062,8 @@
         };
 
         function initApp() {
-            var currentUserId = localStorage.getItem(KEY_CURRENT_USER_ID);
-            if (currentUserId && ALL_MANAGERS.find(function (u) { return u.id === currentUserId; })) {
-                state.currentUser = ALL_MANAGERS.find(function (u) { return u.id === currentUserId; });
-            } else { state.currentUser = null; }
-            render();
-            if (state.currentUser && firebaseReady && db) subscribeToDeals();
+            if (!firebaseReady || !auth) { state.authLoading = false; render(); return; }
+            auth.onAuthStateChanged(onAuthStateChanged);
         }
         window.addEventListener('DOMContentLoaded', initApp);
     </script>
