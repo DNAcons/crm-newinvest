@@ -98,15 +98,20 @@
 
         // === ВПИШИ EMAIL === каждому партнёру его реальный email из Firebase Auth (Шаг 2)
         var USERS = [
-            { email: 'damned13@list.ru',     firstName: 'Денис',    lastName: 'Алёхин' },
-            { email: '8888.ignatov@gmail.com', firstName: 'Александр',lastName: 'Игнатов' },
+            { email: 'denis@example.com',     firstName: 'Денис',    lastName: 'Алёхин' },
+            { email: 'igor.s@example.com',    firstName: 'Игорь',    lastName: 'Шилов' },
+            { email: 'alexander@example.com', firstName: 'Александр',lastName: 'Игнатов' },
+            { email: 'evgeny.m@example.com',  firstName: 'Евгений',  lastName: 'Мартынов' },
+            { email: 'igit@example.com',      firstName: 'Игит',     lastName: 'Антонян' },
             { email: 'irina@example.com',     firstName: 'Ирина',    lastName: 'Тараненко' },
-            { email: 'igor.gordeev.196@mail.ru',    firstName: 'Игорь',    lastName: 'Гордеев' }
-            { email: 'shilov60igor@yandex.ru',    firstName: 'Игорь',    lastName: 'Шилов' }
+            { email: 'evgeny.b@example.com',  firstName: 'Евгений',  lastName: 'Богат' },
+            { email: 'igor.g@example.com',    firstName: 'Игорь',    lastName: 'Гордеев' }
         ];
 
         // === ВПИШИ EMAIL === те же email, что в правиле isAdmin() в Firestore Rules (кому доступна сводка)
-        var ADMIN_EMAILS = ['damned13@list.ru'];
+        var ADMIN_EMAILS = [
+            // 'denis@example.com'
+        ];
 
         var MONTH_NAMES = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
         var WEEK_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
