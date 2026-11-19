@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>N.E.W. Invest CRM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #f1f5f9; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        .fade-in { animation: fadeIn 0.2s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        input, textarea, select { transition: all 0.2s; }
+        input:focus, textarea:focus, select:focus { outline: none; box-shadow: 0 0 0 2px #d4af37; border-color: #d4af37; }
+        .dropdown-menu { transform-origin: top; animation: dropIn 0.15s ease-out; }
+        @keyframes dropIn { from { opacity: 0; transform: scaleY(0.95) translateY(-4px); } to { opacity: 1; transform: scaleY(1) translateY(0); } }
+        .blink { animation: blinkAnim 1s step-start infinite; }
+        @keyframes blinkAnim { 50% { opacity: 0.15; } }
+        .drag-over { outline: 2px dashed #d4af37; outline-offset: -6px; background: rgba(212, 175, 55, 0.08); }
+        .dragging { opacity: 0.4; }
+        .pipeline-scroll { overflow-x: auto; overflow-y: hidden; scrollbar-width: auto; scrollbar-color: #d4af37 #e2e8f0; }
+        .pipeline-scroll::-webkit-scrollbar { height: 18px; }
+        .pipeline-scroll::-webkit-scrollbar-track { background: #e2e8f0; border-radius: 999px; }
+        .pipeline-scroll::-webkit-scrollbar-thumb { background: linear-gradient(90deg, #f59e0b, #d4af37); border-radius: 999px; border: 4px solid #e2e8f0; min-width: 90px; }
+        .pipeline-scroll::-webkit-scrollbar-thumb:hover { background: linear-gradient(90deg, #d97706, #b48a22); }
+    </style>
+</head>
+<body class="text-slate-800 h-screen overflow-hidden">
+    <div id="app">
+        <div class="flex items-center justify-center h-screen bg-slate-50">
+            <div class="text-center">
+                <div class="animate-pulse flex flex-col items-center gap-4">
+                    <div class="w-12 h-12 bg-slate-200 rounded-xl"></div>
+                    <div class="h-4 w-48 bg-slate-200 rounded"></div>
+                    <p class="text-xs text-slate-400">Загрузка...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="./firebase-app.js" onerror="window.__fbLoadErr='firebase-app.js не найден или битый'"></script>
+    <script src="./firebase-firestore.js" onerror="window.__fbLoadErr='firebase-firestore.js не найден или битый'"></script>
+    <script src="./firebase-auth.js" onerror="window.__fbLoadErr='firebase-auth.js не найден или битый'"></script>
+
+    <script>
+        window.__crmBooted = false;
+        window.__lastError = '';
+        window.onerror = function (msg, source, lineno) {
+            window.__lastError = msg + ' (строка ' + lineno + ')';
+            showBootError(window.__lastError, false);
+            return false;
+        };
+        function showBootError(text, isWatchdog) {
+            var box = document.getElementById('boot-error');
+            if (!box) {
+                box = document.createElement('div');
+                box.id = 'boot-error';
+                box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;background:#fee2e2;color:#991b1b;padding:14px 16px;font-size:13px;z-index:99999;border-top:2px solid #ef4444;line-height:1.5;';
+                document.body.appendChild(box);
+            }
+            var hint = isWatchdog
+                ? 'Скрипт CRM не запустился. Чаще всего это потерянная запятая при правке карандашом в GitHub. Залей index.html заново через Add file - Upload files.'
+                : 'Ошибка выполнения скрипта:';
+            box.innerHTML = '<b>Не удалось загрузить CRM.</b><br>' + hint + (text ? '<br><br><code style="background:#fff;padding:2px 6px;border-radius:4px;display:inline-block;margin-top:6px;word-break:break-all;">' + String(text).replace(/</g, '&lt;') + '</code>' : '');
+        }
+        setTimeout(function () {
+            if (window.__crmBooted !== true) showBootError(window.__lastError || window.__fbLoadErr || '', true);
+        }, 6000);
+    </script>
+
+    <script>
+        window.__crmBooted = true;
+
+        var db = null, auth = null, firebaseReady = false;
+        try {
+            if (typeof firebase !== 'undefined') {
+                var firebaseConfig = {
+                    apiKey: "AIzaSyCZS2M_KVwsHYfZIxuQRFH_y1UtTz30YB0",
+                    authDomain: "new-crm-c3637.firebaseapp.com",
+                    projectId: "new-crm-c3637",
+                    storageBucket: "new-crm-c3637.firebasestorage.app",
+                    messagingSenderId: "683210584418",
+                    appId: "1:683210584418:web:c202cef4c7b8b09bb97c3b"
+                };
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.firestore();
+                auth = firebase.auth();
+                firebaseReady = true;
+            }
+        } catch (e) { console.error('Firebase init:', e); }
+
+        var STAGES = [
+            { id: 'new', name: 'Новый лид', cardBg: 'bg-slate-50', cardBorder: 'border-slate-400', cardText: 'text-slate-800', headerBg: 'bg-slate-100' },
+            { id: 'contacted', name: 'Созвонились, инфо направлено', cardBg: 'bg-blue-50', cardBorder: 'border-blue-400', cardText: 'text-blue-900', headerBg: 'bg-blue-100' },
+            { id: 'meeting1', name: '1 встреча назначена', cardBg: 'bg-indigo-50', cardBorder: 'border-indigo-400', cardText: 'text-indigo-900', headerBg: 'bg-indigo-100' },
+            { id: 'approval', name: 'Согласование', cardBg: 'bg-violet-50', cardBorder: 'border-violet-400', cardText: 'text-violet-900', headerBg: 'bg-violet-100' },
+            { id: 'memo_sent', name: 'Меморандум отправлен', cardBg: 'bg-purple-50', cardBorder: 'border-purple-400', cardText: 'text-purple-900', headerBg: 'bg-purple-100' },
+            { id: 'meeting2', name: '2 встреча назначена', cardBg: 'bg-fuchsia-50', cardBorder: 'border-fuchsia-400', cardText: 'text-fuchsia-900', headerBg: 'bg-fuchsia-100' },
+            { id: 'memo_filled', name: 'Меморандум заполнен', cardBg: 'bg-pink-50', cardBorder: 'border-pink-400', cardText: 'text-pink-900', headerBg: 'bg-pink-100' },
+            { id: 'investor_meeting', name: 'Встреча с инвестором', cardBg: 'bg-rose-50', cardBorder: 'border-rose-400', cardText: 'text-rose-900', headerBg: 'bg-rose-100' },
+            { id: 'contract', name: 'Подписан договор, Invoice', cardBg: 'bg-orange-50', cardBorder: 'border-orange-400', cardText: 'text-orange-900', headerBg: 'bg-orange-100' },
+            { id: 'audit', name: 'Этап проведения аудита', cardBg: 'bg-amber-50', cardBorder: 'border-amber-400', cardText: 'text-amber-900', headerBg: 'bg-amber-100' },
+            { id: 'funded', name: 'Инвестиции получены', cardBg: 'bg-emerald-50', cardBorder: 'border-emerald-400', cardText: 'text-emerald-900', headerBg: 'bg-emerald-100' },
+            { id: 'failed', name: 'Факап - сделка провалена', cardBg: 'bg-red-50', cardBorder: 'border-red-400', cardText: 'text-red-900', headerBg: 'bg-red-100' }
+        ];
+
+        var USERS = [
+            { email: 'damned13@list.ru',             firstName: 'Денис',     lastName: 'Алёхин' },
+            { email: 'shilov60igor@yandex.ru',       firstName: 'Игорь',     lastName: 'Шилов' },
+            { email: '8888.ignatov@gmail.com',       firstName: 'Александр', lastName: 'Игнатов' },
+            { email: 'igor.gordeev.196@mail.ru',     firstName: 'Игорь',     lastName: 'Гордеев' },
+            { email: 'Irinataranenko2016@gmail.com', firstName: 'Ирина',     lastName: 'Тараненко' }
+        ];
+
+        var ADMIN_EMAILS = ['damned13@list.ru'];
+
+        var MONTH_NAMES = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+        var WEEK_DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+        var state = {
+            currentUser: null, deals: [], view: 'pipeline',
+            modalOpen: false, modalReadOnly: false, selectedDealId: null, newDealStage: null,
+            firebaseConnected: false, dbError: '', authLoading: true, loginError: '',
+            calYear: new Date().getFullYear(), calMonth: new Date().getMonth(), selectedDate: null,
+            dealFiles: [], uploadingName: null, taskPopup: null, analyticsScope: 'all'
+        };
+
+        function formatMoney(a) { return new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(a || 0); }
+        function formatDate(s) { if (!s) return ''; return new Date(s).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+        function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+        function dateKey(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+        function dateKeyOf(s) { return dateKey(new Date(s)); }
+        function timeOf(s) { if (!s) return ''; var d = new Date(s); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+        function toLocalInputValue(s) { if (!s) return ''; var d = new Date(s); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+        function formatSize(b) { if (!b && b !== 0) return ''; if (b < 1024) return b + ' Б'; if (b < 1048576) return Math.round(b / 1024) + ' КБ'; return (b / 1048576).toFixed(1) + ' МБ'; }
+        function findDeal(id) { return state.deals.find(function (d) { return d.id === id; }) || null; }
+        function labelForUid(uid) { var me = state.currentUser; if (me && me.uid === uid) return me.lastName + ' ' + me.firstName; return 'Партнёр'; }
+        function initialsForUid(uid) { var me = state.currentUser; if (me && me.uid === uid) return me.firstName[0] + (me.lastName ? me.lastName[0] : ''); return '?'; }
+        function isOwner(deal) { return !deal || deal.ownerUid === state.currentUser.uid; }
+        function isMine(deal) { if (!state.currentUser) return false; var u = state.currentUser.uid; return deal.ownerUid === u || deal.responsibleUid === u; }
+        function isAdminClient() { if (!state.currentUser) return false; return ADMIN_EMAILS.map(function (e) { return e.toLowerCase(); }).indexOf(state.currentUser.email.toLowerCase()) !== -1; }
+        function isOverdue(t) { return t && t.date && !t.done && new Date(t.date).getTime() < Date.now(); }
+        function dealTaskStatus(deal) { var open = (deal.tasks || []).filter(function (t) { return !t.done; }); if (open.some(isOverdue)) return 'overdue'; if (open.length) return 'active'; return 'none'; }
+        function getMyTasks() { var l = []; state.deals.forEach(function (d) { if (!isMine(d)) return; (d.tasks || []).forEach(function (t, i) { l.push({ deal: d, task: t, index: i }); }); }); return l; }
+        function getMyDeals() { return state.deals.filter(isMine); }
+        function getAnalyticsDeals() { if (state.analyticsScope === 'mine' || !isAdminClient()) return state.deals.filter(isMine); return state.deals; }
+        function stageOptionsHtml(sel) { return STAGES.map(function (s) { return '<option value="' + s.id + '"' + (s.id === sel ? ' selected' : '') + '>' + s.name + '</option>'; }).join(''); }
+
+        // ====== ПОДПИСКИ: админ - вся коллекция, партнёр - только свои ======
+        var dealUnsubs = [];
+        var dealSets = {};
+        function clearDealSubs() { dealUnsubs.forEach(function (u) { try { u(); } catch (e) {} }); dealUnsubs = []; dealSets = {}; }
+
+        function mergeAndRender() {
+            var merged = {};
+            Object.keys(dealSets).forEach(function (k) { Object.keys(dealSets[k]).forEach(function (id) { merged[id] = dealSets[k][id]; }); });
+            var arr = Object.keys(merged).map(function (id) { return merged[id]; });
+            arr.sort(function (a, b) { return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); });
+            state.deals = arr;
+            state.firebaseConnected = true;
+            state.dbError = '';
+            render();
+        }
+        function onDbError(error) {
+            console.error('Firestore:', error);
+            state.firebaseConnected = false;
+            state.dbError = (error && error.code ? error.code + ' — ' : '') + (error && error.message ? error.message : String(error));
+            render();
+        }
+        function attachQuery(q, key) {
+            var u = q.onSnapshot(function (snap) {
+                var m = {};
+                snap.docs.forEach(function (d) { var o = d.data(); o.id = d.id; m[d.id] = o; });
+                dealSets[key] = m;
+                mergeAndRender();
+            }, onDbError);
+            dealUnsubs.push(u);
+        }
+        function subscribeToDeals() {
+            if (!db || !state.currentUser) return;
+            clearDealSubs();
+            if (isAdminClient()) {
+                attachQuery(db.collection('deals'), 'all');
+            } else {
+                var uid = state.currentUser.uid;
+                attachQuery(db.collection('deals').where('ownerUid', '==', uid), 'own');
+                attachQuery(db.collection('deals').where('responsibleUid', '==', uid), 'resp');
+            }
+        }
+
+        function saveDealToDB(data) {
+            if (!db) { alert('База недоступна'); return; }
+            var payload = Object.assign({}, data, { createdAt: new Date().toISOString() });
+            db.collection('deals').add(payload).then(function () {
+                if (!isAdminClient()) setTimeout(function () { subscribeToDeals(); }, 400);
+            }).catch(function (e) { alert('Ошибка сохранения: ' + e.message); });
+        }
+        function updateDealInDB(id, data) { if (!db) return; db.collection('deals').doc(id).update(data).catch(function (e) { console.error(e); alert('Ошибка записи: ' + e.message); }); }
+        function deleteDealFromDB(id) { if (!db) return; db.collection('deals').doc(id).delete().catch(function (e) { console.error(e); }); }
+
+        // ====== ФАЙЛЫ: подколлекции сделки ======
+        function filesCol(dealId) { return db.collection('deals').doc(dealId).collection('files'); }
+        function chunksCol(dealId) { return db.collection('deals').doc(dealId).collection('chunks'); }
+
+        function loadFiles(dealId) {
+            state.dealFiles = []; state.uploadingName = null;
+            if (!db || !dealId) return;
+            filesCol(dealId).get().then(function (snap) {
+                state.dealFiles = snap.docs.map(function (d) { var o = d.data(); o.id = d.id; return o; });
+                state.uploadingName = null;
+                if (state.modalOpen) renderModal();
+            }).catch(function (e) { console.error(e); state.uploadingName = null; });
+        }
+
+        window.handleFileUpload = function (input) {
+            if (state.modalReadOnly) return;
+            if (!input.files || !input.files[0] || !state.selectedDealId) return;
+            var deal = findDeal(state.selectedDealId);
+            if (!deal || deal.ownerUid !== state.currentUser.uid) { alert('Редактировать чужие сделки запрещено'); return; }
+            var file = input.files[0];
+            if (!db) { alert('Нет подключения к БД'); return; }
+            if (file.size > 20 * 1024 * 1024) { alert('Файл больше 20 МБ. Используй «Прикрепить ссылку».'); return; }
+            var dealId = state.selectedDealId;
+            state.uploadingName = file.name; renderModal();
+            var reader = new FileReader();
+            reader.onload = function () {
+                try {
+                    var base64 = String(reader.result).split(',')[1];
+                    var CHUNK = 700000, chunks = [];
+                    for (var i = 0; i < base64.length; i += CHUNK) chunks.push(base64.substr(i, CHUNK));
+                    filesCol(dealId).add({ dealId: dealId, name: file.name, size: file.size, type: file.type || '', chunkCount: chunks.length, external: false, createdAt: new Date().toISOString() })
+                        .then(function (ref) {
+                            return Promise.all(chunks.map(function (c, idx) { return chunksCol(dealId).add({ fileId: ref.id, index: idx, data: c }); }));
+                        })
+                        .then(function () { loadFiles(dealId); })
+                        .catch(function (err) { state.uploadingName = null; alert('Ошибка: ' + (err && err.message ? err.message : err)); renderModal(); });
+                } catch (e) { state.uploadingName = null; alert('Не удалось прочитать файл'); renderModal(); }
+            };
+            reader.onerror = function () { state.uploadingName = null; alert('Ошибка чтения'); renderModal(); };
+            reader.readAsDataURL(file);
+        };
+
+        window.openFile = function (fileId) {
+            var f = null;
+            for (var i = 0; i < state.dealFiles.length; i++) if (state.dealFiles[i].id === fileId) f = state.dealFiles[i];
+            if (!f) return;
+            if (f.url) { window.open(f.url, '_blank'); return; }
+            var dealId = state.selectedDealId;
+            if (!db || !dealId) return;
+            chunksCol(dealId).where('fileId', '==', fileId).get().then(function (snap) {
+                var chunks = snap.docs.map(function (d) { return d.data(); });
+                chunks.sort(function (a, b) { return a.index - b.index; });
+                var b64 = ''; chunks.forEach(function (c) { b64 += c.data || ''; });
+                var bin = atob(b64), arr = new Uint8Array(bin.length);
+                for (var j = 0; j < bin.length; j++) arr[j] = bin.charCodeAt(j);
+                var blob = new Blob([arr], { type: f.type || 'application/octet-stream' });
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a'); a.href = url; a.download = f.name || 'file';
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+            }).catch(function (e) { alert('Не удалось открыть файл: ' + e.message); });
+        };
+
+        window.deleteFileDoc = function (fileId) {
+            if (state.modalReadOnly) return;
+            if (!confirm('Удалить файл?')) return;
+            var deal = findDeal(state.selectedDealId);
+            if (!deal || deal.ownerUid !== state.currentUser.uid) { alert('Удалять файлы в чужих сделках запрещено'); return; }
+            var dealId = state.selectedDealId;
+            chunksCol(dealId).where('fileId', '==', fileId).get().then(function (snap) {
+                var batch = db.batch();
+                snap.docs.forEach(function (d) { batch.delete(d.ref); });
+                batch.delete(filesCol(dealId).doc(fileId));
+                return batch.commit();
+            }).then(function () { loadFiles(dealId); }).catch(function (e) { alert('Ошибка удаления: ' + e.message); });
+        };
+
+        window.attachLink = function () {
+            if (state.modalReadOnly) return;
+            var deal = findDeal(state.selectedDealId);
+            if (!deal || deal.ownerUid !== state.currentUser.uid) { alert('Прикреплять ссылки в чужих сделках запрещено'); return; }
+            var url = prompt('Вставьте ссылку на файл:'); if (!url || !url.trim()) return;
+            var name = prompt('Название файла:', 'Внешний файл'); if (name === null) return;
+            var dealId = state.selectedDealId;
+            filesCol(dealId).add({ dealId: dealId, name: name.trim() || 'Внешний файл', size: 0, type: '', chunkCount: 0, external: true, url: url.trim(), createdAt: new Date().toISOString() })
+                .then(function () { loadFiles(dealId); }).catch(function (e) { alert('Ошибка: ' + e.message); });
+        };
+
+        // ====== AUTH ======
+        window.doLogin = function () {
+            if (!auth) { setLoginError('Firebase Auth не подключён'); return; }
+            var e = document.getElementById('login-email'), p = document.getElementById('login-pass');
+            if (!e || !p) return;
+            var email = e.value.trim(), pass = p.value;
+            if (!email || !pass) { setLoginError('Введите email и пароль'); return; }
+            setLoginError('');
+            var btn = document.getElementById('login-submit');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Вход...'; }
+            auth.signInWithEmailAndPassword(email, pass).catch(function (err) {
+                var c = err && err.code ? err.code : '', msg = 'Неверный email или пароль';
+                if (c === 'auth/too-many-requests') msg = 'Слишком много попыток. Подожди минуту.';
+                else if (c === 'auth/network-request-failed') msg = 'Нет связи с сервером авторизации';
+                setLoginError(msg);
+                if (btn) { btn.disabled = false; btn.innerHTML = '<span>Войти в систему</span><i class="fa-solid fa-arrow-right"></i>'; }
+            });
+        };
+        window.doLogout = function () { clearDealSubs(); if (auth) auth.signOut(); };
+        window.doReset = function () {
+            if (!auth) return;
+            var e = document.getElementById('login-email'), email = e ? e.value.trim() : '';
+            if (!email) { setLoginError('Сначала введи email'); return; }
+            auth.sendPasswordResetEmail(email).then(function () { setLoginError(''); alert('Ссылка для сброса отправлена на ' + email); }).catch(function (err) { setLoginError('Не удалось отправить: ' + err.message); });
+        };
+        function setLoginError(m) { state.loginError = m || ''; var b = document.getElementById('login-error'); if (b) { b.textContent = state.loginError; b.style.display = state.loginError ? 'block' : 'none'; } }
+
+        function onAuthStateChanged(user) {
+            state.authLoading = false;
+            if (user) {
+                var email = (user.email || '').toLowerCase();
+                var p = USERS.find(function (u) { return u.email.toLowerCase() === email; });
+                state.currentUser = { uid: user.uid, email: user.email || '', firstName: p ? p.firstName : 'Пользователь', lastName: p ? p.lastName : '' };
+                subscribeToDeals();
+            } else {
+                clearDealSubs();
+                state.currentUser = null; state.deals = []; state.modalOpen = false; state.modalReadOnly = false;
+                state.selectedDealId = null; state.taskPopup = null; state.firebaseConnected = false; state.dbError = '';
+                var mr = document.getElementById('modal-root'); if (mr) mr.remove();
+                var pr = document.getElementById('task-popup-root'); if (pr) pr.remove();
+            }
+            render();
+        }
+
+        function renderLogin() {
+            var err = '<div id="login-error" style="display:' + (state.loginError ? 'block' : 'none') + '" class="mt-3 text-xs font-semibold text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">' + (state.loginError || '') + '</div>';
+            return '<div class="h-screen w-full flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-4"><div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md fade-in border border-white/10"><div class="text-center mb-8"><div class="w-16 h-16 bg-slate-900 rounded-xl mx-auto flex items-center justify-center mb-4 shadow-lg"><i class="fa-solid fa-gem text-amber-400 text-2xl"></i></div><h1 class="text-2xl font-bold text-slate-900 tracking-tight">N.E.W. Invest CRM</h1><p class="text-slate-500 text-sm mt-1">Вход для партнёров</p></div><div class="space-y-4"><div><label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Email</label><input type="email" id="login-email" autocomplete="username" class="w-full px-4 py-3 rounded-lg border border-slate-200 bg-slate-50 text-slate-900" placeholder="you@company.com"></div><div><label class="block text-xs font-semibold text-slate-600 uppercase tracking-wider mb-2">Пароль</label><input type="password" id="login-pass" autocomplete="current-password" onkeydown="if(event.key===\'Enter\') window.doLogin()" class="w-full px-4 py-3 rounded-lg border border-slate-200 bg-slate-50 text-slate-900" placeholder="********"></div><button id="login-submit" onclick="window.doLogin()" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-3 rounded-lg transition-all shadow-lg flex items-center justify-center gap-2"><span>Войти в систему</span><i class="fa-solid fa-arrow-right"></i></button><button onclick="window.doReset()" class="w-full text-xs text-slate-400 hover:text-amber-600">Забыли пароль?</button>' + err + '</div></div></div>';
+        }
+
+        function render() {
+            var app = document.getElementById('app'); if (!app) return;
+            if (state.authLoading) { app.innerHTML = '<div class="flex items-center justify-center h-screen bg-slate-50"><p class="text-xs text-slate-400">Проверка входа...</p></div>'; return; }
+            if (!state.currentUser) { app.innerHTML = renderLogin(); return; }
+            app.innerHTML = renderApp();
+            if (state.view === 'analytics') setTimeout(initCharts, 100);
+            if (state.modalOpen) renderModal();
+            if (state.taskPopup) renderTaskPopup();
+            else { var pr = document.getElementById('task-popup-root'); if (pr) pr.remove(); }
+        }
+
+        function renderApp() {
+            var titles = { pipeline: ['Моя воронка проектов', 'Только ваши сделки и задачи'], allprojects: ['Все проекты команды', 'Сводная воронка. Только просмотр'], analytics: ['Аналитика', 'Статистика по проектам'], tasks: ['Мои задачи', 'Интерактивный календарь'] };
+            var t = titles[state.view], admin = isAdminClient();
+            var ini = state.currentUser.firstName[0] + (state.currentUser.lastName ? state.currentUser.lastName[0] : '');
+            var dot = state.firebaseConnected ? 'bg-emerald-500' : 'bg-red-500';
+            var txt = state.firebaseConnected ? 'Облако подключено' : 'Нет связи с базой';
+            function navBtn(v, icon, label, mobile) {
+                var cls = state.view === v ? 'bg-slate-900 text-white' + (mobile ? '' : ' shadow-md') : 'text-slate-600 hover:bg-slate-50';
+                var extra = mobile ? ' window.toggleMobileMenu();' : '';
+                return '<button onclick="window.setView(\'' + v + '\');' + extra + '" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors ' + cls + '"><i class="fa-solid ' + icon + ' w-5"></i> ' + label + '</button>';
+            }
+            var nav = navBtn('pipeline', 'fa-chart-column', 'Моя воронка', false) + (admin ? navBtn('allprojects', 'fa-layer-group', 'Все проекты', false) : '') + navBtn('tasks', 'fa-calendar-check', 'Задачи', false) + navBtn('analytics', 'fa-chart-pie', 'Аналитика', false);
+            var navM = navBtn('pipeline', 'fa-chart-column', 'Моя воронка', true) + (admin ? navBtn('allprojects', 'fa-layer-group', 'Все проекты', true) : '') + navBtn('tasks', 'fa-calendar-check', 'Задачи', true) + navBtn('analytics', 'fa-chart-pie', 'Аналитика', true);
+            var right = '';
+            if (state.view === 'pipeline') right = '<button onclick="window.openNewDealModal()" class="bg-slate-900 hover:bg-slate-800 text-white px-3 md:px-4 py-2 rounded-lg text-xs md:text-sm font-medium shadow-md flex items-center gap-2"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Новая сделка</span><span class="sm:hidden">Новая</span></button>';
+            else if (state.view === 'allprojects') right = '<span class="hidden md:inline-flex items-center gap-1 text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-1 rounded-full"><i class="fa-solid fa-lock text-[9px]"></i> Только просмотр</span>';
+            else if (state.view === 'analytics' && admin) right = '<div class="flex items-center bg-slate-100 rounded-lg p-0.5 text-xs font-semibold"><button onclick="window.setAnalyticsScope(\'all\')" class="px-3 py-1.5 rounded-md ' + (state.analyticsScope === 'all' ? 'bg-white shadow text-slate-900' : 'text-slate-500') + '"><i class="fa-solid fa-users mr-1"></i>Все</button><button onclick="window.setAnalyticsScope(\'mine\')" class="px-3 py-1.5 rounded-md ' + (state.analyticsScope === 'mine' ? 'bg-white shadow text-slate-900' : 'text-slate-500') + '"><i class="fa-solid fa-user mr-1"></i>Мои</button></div>';
+            var body = state.view === 'pipeline' ? renderPipeline(false) : state.view === 'allprojects' ? renderPipeline(true) : state.view === 'tasks' ? renderTasksView() : renderAnalytics();
+            var errBar = state.dbError ? '<div class="bg-red-50 border-b border-red-200 text-red-700 text-xs px-4 md:px-8 py-2"><b>База отклонила запрос:</b> ' + state.dbError + '</div>' : '';
+            return '<div class="h-screen flex bg-slate-50"><aside class="w-64 bg-white border-r border-slate-200 flex-col shadow-sm hidden md:flex"><div class="p-6 border-b border-slate-100"><div class="flex items-center gap-3"><div class="w-10 h-10 bg-slate-900 rounded-lg flex items-center justify-center flex-shrink-0"><i class="fa-solid fa-gem text-amber-400"></i></div><div><h1 class="font-bold text-slate-900 text-lg leading-tight">N.E.W. Invest</h1><p class="text-[10px] text-slate-400 uppercase tracking-widest">Premium CRM</p></div></div></div><nav class="flex-1 p-4 space-y-1 overflow-y-auto">' + nav + '</nav><div class="p-4 border-t border-slate-100 bg-slate-50/50"><div class="flex items-center gap-3 mb-3"><div class="w-9 h-9 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">' + ini + '</div><div class="flex-1 min-w-0"><p class="text-sm font-semibold text-slate-900 truncate">' + state.currentUser.firstName + ' ' + state.currentUser.lastName + '</p><p class="text-[10px] text-slate-400 uppercase tracking-wider">' + (admin ? 'Админ' : 'Партнёр') + '</p></div></div><div class="mb-3 flex items-center gap-1"><span class="w-2 h-2 rounded-full ' + dot + '"></span><span class="text-[10px] text-slate-400">' + txt + '</span></div><button onclick="window.doLogout()" class="w-full text-xs text-slate-500 hover:text-red-500 flex items-center justify-center gap-1 py-2 rounded border border-slate-200 hover:bg-red-50"><i class="fa-solid fa-right-from-bracket"></i> Выйти</button></div></aside><main class="flex-1 flex flex-col min-w-0"><header class="bg-white border-b border-slate-200 px-4 md:px-8 py-4 flex items-center justify-between shadow-sm z-10 gap-4 flex-shrink-0"><div class="min-w-0 flex items-center gap-3"><button onclick="window.toggleMobileMenu()" class="md:hidden w-9 h-9 rounded-lg border border-slate-200 flex items-center justify-center text-slate-600"><i class="fa-solid fa-bars"></i></button><div class="min-w-0"><h2 class="text-lg md:text-xl font-bold text-slate-900 truncate">' + t[0] + '</h2><p class="text-xs text-slate-400 mt-0.5 hidden sm:block">' + t[1] + '</p></div></div><div class="flex items-center gap-2 flex-shrink-0">' + right + '</div></header>' + errBar + '<div class="flex-1 relative overflow-auto">' + body + '</div></main></div><div id="mobile-menu" class="hidden fixed inset-0 z-40 md:hidden"><div class="absolute inset-0 bg-black/50" onclick="window.toggleMobileMenu()"></div><div class="absolute left-0 top-0 bottom-0 w-72 bg-white shadow-xl flex flex-col"><div class="p-6 border-b border-slate-100 flex items-center justify-between"><h1 class="font-bold text-slate-900">N.E.W. Invest</h1><button onclick="window.toggleMobileMenu()" class="text-slate-400"><i class="fa-solid fa-xmark text-xl"></i></button></div><nav class="flex-1 p-4 space-y-1">' + navM + '</nav><div class="p-4 border-t border-slate-100"><button onclick="window.doLogout()" class="w-full text-xs text-slate-500 hover:text-red-500 py-2 rounded border border-slate-200"><i class="fa-solid fa-right-from-bracket mr-1"></i>Выйти</button></div></div></div>';
+        }
+
+        window.toggleMobileMenu = function () { var m = document.getElementById('mobile-menu'); if (m) m.classList.toggle('hidden'); };
+        window.setView = function (v) { if (v === 'allprojects' && !isAdminClient()) v = 'pipeline'; state.view = v; state.modalOpen = false; state.modalReadOnly = false; state.taskPopup = null; state.newDealStage = null; var mr = document.getElementById('modal-root'); if (mr) mr.remove(); var pr = document.getElementById('task-popup-root'); if (pr) pr.remove(); render(); };
+        window.setAnalyticsScope = function (s) { state.analyticsScope = s; render(); };
+
+        window.dragStart = function (e, id) { if (state.view === 'allprojects') { e.preventDefault(); return; } var d = findDeal(id); if (!d || d.ownerUid !== state.currentUser.uid) { e.preventDefault(); return; } window.draggingDealId = id; try { e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move'; } catch (x) {} setTimeout(function () { var el = document.getElementById('card-' + id); if (el) el.classList.add('dragging'); }, 0); };
+        window.dragEnd = function () { window.draggingDealId = null; document.querySelectorAll('.drag-over').forEach(function (e) { e.classList.remove('drag-over'); }); document.querySelectorAll('.dragging').forEach(function (e) { e.classList.remove('dragging'); }); };
+        window.dragOver = function (e) { if (state.view === 'allprojects') return; e.preventDefault(); try { e.dataTransfer.dropEffect = 'move'; } catch (x) {} if (!e.currentTarget.classList.contains('drag-over')) e.currentTarget.classList.add('drag-over'); };
+        window.dragLeave = function (e) { e.currentTarget.classList.remove('drag-over'); };
+        window.dropDeal = function (e, stageId) { e.preventDefault(); e.currentTarget.classList.remove('drag-over'); if (state.view === 'allprojects') return; var id = window.draggingDealId; if (!id) { try { id = e.dataTransfer.getData('text/plain'); } catch (x) {} } if (!id) return; var d = findDeal(id); if (!d || d.ownerUid !== state.currentUser.uid || d.stage === stageId) return; d.stage = stageId; updateDealInDB(id, { stage: stageId }); window.draggingDealId = null; render(); };
+
+        function renderPipeline(readOnly) {
+            var deals = readOnly ? state.deals : getMyDeals();
+            var cols = STAGES.map(function (s) {
+                var list = deals.filter(function (d) { return d.stage === s.id; });
+                var sum = list.reduce(function (a, d) { return a + (d.investmentAmount || 0); }, 0);
+                var drop = readOnly ? '' : ' ondragover="window.dragOver(event)" ondragleave="window.dragLeave(event)" ondrop="window.dropDeal(event, \'' + s.id + '\')"';
+                var plus = readOnly ? '' : '<button onclick="event.stopPropagation(); window.openNewDealModalWithStage(\'' + s.id + '\')" class="w-6 h-6 rounded-md bg-white/80 hover:bg-amber-100 border border-slate-200 text-slate-500 hover:text-amber-700 flex items-center justify-center"><i class="fa-solid fa-plus text-[10px]"></i></button>';
+                var cards = list.map(function (d) {
+                    var st = dealTaskStatus(d), canEdit = !readOnly && isOwner(d);
+                    var marker = st === 'overdue' ? '<span class="w-2.5 h-2.5 rounded-full bg-red-500 blink flex-shrink-0"></span>' : st === 'active' ? '<span class="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0"></span>' : '';
+                    var drag = canEdit ? 'draggable="true" ondragstart="window.dragStart(event, \'' + d.id + '\')" ondragend="window.dragEnd(event)"' : '';
+                    var del = canEdit ? '<button onclick="event.stopPropagation(); window.deleteDeal(\'' + d.id + '\')" class="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-full bg-white shadow-sm hover:bg-red-50 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 z-10 border border-slate-100"><i class="fa-solid fa-trash text-xs"></i></button>' : '';
+                    var lock = readOnly ? '<div class="absolute top-2 right-2 text-slate-400/70"><i class="fa-solid fa-lock text-[10px]"></i></div>' : '';
+                    return '<div id="card-' + d.id + '" onclick="window.openDealModal(\'' + d.id + '\', ' + readOnly + ')" ' + drag + ' class="group relative ' + s.cardBg + ' border-l-4 ' + s.cardBorder + ' ' + s.cardText + ' rounded-r-lg shadow-sm hover:shadow-md transition-all cursor-pointer p-3 md:p-4 fade-in ' + (canEdit ? 'cursor-grab active:cursor-grabbing' : '') + '">' + del + lock + '<h4 class="font-bold text-sm mb-2 leading-snug pr-8">' + (d.businessName || d.title) + '</h4><div class="flex items-center justify-between mb-2 gap-2"><span class="text-xs font-bold opacity-80">' + formatMoney(d.investmentAmount) + '</span>' + marker + '</div><div class="pt-2 border-t border-black/5 flex items-center gap-2"><div class="w-5 h-5 rounded-full bg-black/10 flex items-center justify-center text-[9px] font-bold opacity-70 flex-shrink-0">' + initialsForUid(d.ownerUid) + '</div><span class="text-[10px] opacity-50 truncate">' + labelForUid(d.ownerUid) + '</span></div></div>';
+                }).join('');
+                return '<div class="w-[280px] md:w-72 flex-shrink-0 flex flex-col bg-slate-100/30 rounded-xl border border-slate-200/60 overflow-hidden"><div class="p-3 md:p-4 border-b border-slate-200/60 ' + s.headerBg + '"><div class="flex items-center justify-between gap-2 mb-1"><h3 class="font-bold text-slate-800 text-xs md:text-sm leading-tight flex-1 min-w-0">' + s.name + '</h3><div class="flex items-center gap-1 flex-shrink-0"><span class="text-[10px] font-bold text-slate-500 bg-white/70 px-2 py-0.5 rounded-full">' + list.length + '</span>' + plus + '</div></div><p class="text-[10px] text-slate-600 font-medium">' + formatMoney(sum) + '</p></div><div class="flex-1 overflow-y-auto custom-scroll p-3 space-y-3"' + drop + '>' + cards + (list.length ? '' : '<div class="text-center py-8 text-slate-300 text-xs">Нет сделок</div>') + '</div></div>';
+            }).join('');
+            return '<div class="h-full pipeline-scroll p-4 md:p-6 pb-8"><div class="flex gap-4 h-full min-w-max">' + cols + '</div></div>';
+        }
+
+        window.calPrev = function () { state.calMonth--; if (state.calMonth < 0) { state.calMonth = 11; state.calYear--; } render(); };
+        window.calNext = function () { state.calMonth++; if (state.calMonth > 11) { state.calMonth = 0; state.calYear++; } render(); };
+        window.calToday = function () { var n = new Date(); state.calYear = n.getFullYear(); state.calMonth = n.getMonth(); state.selectedDate = dateKey(n); render(); };
+        window.selectDate = function (k) { state.selectedDate = k; render(); };
+
+        function taskChip(x) {
+            var t = x.task, bg, ic;
+            if (t.done) { bg = 'bg-slate-400'; ic = 'fa-check'; } else if (isOverdue(t)) { bg = 'bg-red-500'; ic = 'fa-exclamation'; } else { bg = 'bg-emerald-500'; ic = 'fa-clock'; }
+            return '<button onclick="event.stopPropagation(); window.openTaskPopup(\'' + x.deal.id + '\', ' + x.index + ')" class="w-full text-left px-1.5 py-1 rounded text-[9px] font-semibold text-white flex items-center gap-1 ' + bg + ' hover:opacity-90 shadow-sm"><i class="fa-solid ' + ic + ' text-[7px]"></i><span class="truncate">' + timeOf(t.date) + '</span></button>';
+        }
+
+        function renderTasksView() {
+            var all = getMyTasks(), y = state.calYear, m = state.calMonth;
+            var off = (new Date(y, m, 1).getDay() + 6) % 7, days = new Date(y, m + 1, 0).getDate(), today = dateKey(new Date());
+            var od = all.filter(function (x) { return isOverdue(x.task); }).length;
+            var ac = all.filter(function (x) { return !x.task.done && !isOverdue(x.task); }).length;
+            var dn = all.filter(function (x) { return x.task.done; }).length;
+            var cells = '';
+            for (var b = 0; b < off; b++) cells += '<div class="min-h-24 md:min-h-32 rounded-lg bg-slate-50 border border-slate-100"></div>';
+            for (var d = 1; d <= days; d++) {
+                var k = y + '-' + pad2(m + 1) + '-' + pad2(d);
+                var dt = all.filter(function (x) { return x.task.date && dateKeyOf(x.task.date) === k; }).sort(function (a, b2) { return new Date(a.task.date) - new Date(b2.task.date); });
+                var cls = k === state.selectedDate ? 'border-amber-400 bg-amber-50/60 ring-2 ring-amber-300' : k === today ? 'border-amber-300 bg-white' : 'border-slate-200 bg-white hover:bg-slate-50';
+                cells += '<div onclick="window.selectDate(\'' + k + '\')" class="min-h-24 md:min-h-32 rounded-lg border p-1.5 cursor-pointer transition-all flex flex-col gap-1 ' + cls + '"><div class="flex items-center justify-between"><span class="text-[11px] font-bold ' + (k === today ? 'text-amber-600' : 'text-slate-600') + '">' + d + '</span>' + (dt.length ? '<span class="text-[9px] font-bold text-white bg-slate-700 rounded-full px-1.5">' + dt.length + '</span>' : '') + '</div><div class="flex flex-col gap-0.5 overflow-hidden flex-1">' + dt.slice(0, 4).map(taskChip).join('') + (dt.length > 4 ? '<span class="text-[9px] text-slate-500 font-medium">+' + (dt.length - 4) + '</span>' : '') + '</div></div>';
+            }
+            var trail = (7 - ((off + days) % 7)) % 7;
+            for (var t2 = 0; t2 < trail; t2++) cells += '<div class="min-h-24 md:min-h-32 rounded-lg bg-slate-50 border border-slate-100"></div>';
+            var wh = WEEK_DAYS.map(function (w) { return '<div class="text-center text-[10px] font-bold text-slate-400 uppercase py-1">' + w + '</div>'; }).join('');
+            return '<div class="h-full overflow-y-auto custom-scroll p-4 md:p-6 space-y-4"><div class="flex flex-wrap items-center justify-between gap-3 sticky top-0 bg-slate-50 z-10 py-2"><div class="flex items-center gap-2"><button onclick="window.calPrev()" class="w-9 h-9 rounded-lg border border-slate-200 bg-white text-slate-600 flex items-center justify-center"><i class="fa-solid fa-chevron-left text-xs"></i></button><h3 class="text-base md:text-lg font-bold text-slate-900 min-w-[160px] text-center">' + MONTH_NAMES[m] + ' ' + y + '</h3><button onclick="window.calNext()" class="w-9 h-9 rounded-lg border border-slate-200 bg-white text-slate-600 flex items-center justify-center"><i class="fa-solid fa-chevron-right text-xs"></i></button><button onclick="window.calToday()" class="px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-600">Сегодня</button></div><div class="flex items-center gap-3 text-[10px] font-semibold"><span class="bg-emerald-50 text-emerald-700 px-2 py-1 rounded">Активных: ' + ac + '</span><span class="bg-red-50 text-red-700 px-2 py-1 rounded">Просрочено: ' + od + '</span><span class="bg-slate-100 text-slate-600 px-2 py-1 rounded">Готово: ' + dn + '</span></div></div><div class="bg-white rounded-xl border border-slate-200 shadow-sm p-2 md:p-4"><div class="grid grid-cols-7 gap-1 md:gap-2 mb-2">' + wh + '</div><div class="grid grid-cols-7 gap-1 md:gap-2">' + cells + '</div></div>' + renderDayPanel() + '</div>';
+        }
+
+        function renderDayPanel() {
+            if (!state.selectedDate) return '<div class="bg-white rounded-xl border border-slate-100 shadow-sm p-6 text-center text-sm text-slate-400">Выберите день в календаре</div>';
+            var dt = getMyTasks().filter(function (x) { return x.task.date && dateKeyOf(x.task.date) === state.selectedDate; }).sort(function (a, b) { return new Date(a.task.date) - new Date(b.task.date); });
+            var pretty = new Date(state.selectedDate + 'T00:00:00').toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+            var rows = dt.map(function (x) {
+                var t = x.task, bg, bc, tc, badge, iw, ic;
+                if (t.done) { bg = 'bg-slate-50'; bc = 'border-slate-200'; tc = 'text-slate-400 line-through'; badge = '<span class="text-[9px] font-bold text-slate-500 bg-slate-200 px-2 py-0.5 rounded-full uppercase">Выполнена</span>'; iw = 'bg-slate-300'; ic = 'fa-check'; }
+                else if (isOverdue(t)) { bg = 'bg-red-50'; bc = 'border-red-200'; tc = 'text-red-900'; badge = '<span class="text-[9px] font-bold text-red-700 bg-red-200 px-2 py-0.5 rounded-full uppercase blink">Просрочена</span>'; iw = 'bg-red-500'; ic = 'fa-exclamation'; }
+                else { bg = 'bg-emerald-50'; bc = 'border-emerald-200'; tc = 'text-emerald-900'; badge = '<span class="text-[9px] font-bold text-emerald-700 bg-emerald-200 px-2 py-0.5 rounded-full uppercase">Активна</span>'; iw = 'bg-emerald-500'; ic = 'fa-clock'; }
+                return '<button onclick="window.openTaskPopup(\'' + x.deal.id + '\', ' + x.index + ')" class="w-full text-left flex items-start gap-3 ' + bg + ' rounded-lg p-3 border ' + bc + ' hover:shadow-md transition-all"><div class="w-10 h-10 rounded-lg ' + iw + ' flex items-center justify-center text-white flex-shrink-0"><i class="fa-solid ' + ic + '"></i></div><div class="flex-1 min-w-0"><div class="mb-1">' + badge + '</div><p class="text-sm ' + tc + ' break-words">' + t.text + '</p><div class="flex items-center gap-2 mt-1 flex-wrap"><span class="text-[10px] text-slate-500"><i class="fa-regular fa-clock mr-1"></i>' + formatDate(t.date) + '</span><span class="text-[10px] text-amber-600 font-semibold"><i class="fa-solid fa-building mr-1"></i>' + (x.deal.businessName || x.deal.title) + '</span></div></div></button>';
+            }).join('');
+            return '<div class="bg-white rounded-xl border border-slate-100 shadow-sm p-4 md:p-6"><div class="flex items-center justify-between mb-4"><h3 class="text-sm font-bold text-slate-900 uppercase tracking-wider">Задачи на ' + pretty + '</h3><button onclick="window.selectDate(null)" class="text-xs text-slate-400 hover:text-slate-600"><i class="fa-solid fa-xmark mr-1"></i>Сбросить</button></div><div class="space-y-2">' + rows + (dt.length ? '' : '<p class="text-xs text-slate-400 italic text-center py-4">На этот день задач нет</p>') + '</div></div>';
+        }
+
+        window.openTaskPopup = function (id, i) { state.taskPopup = { dealId: id, taskIndex: i, rescheduling: false }; render(); };
+        window.closeTaskPopup = function () { state.taskPopup = null; var p = document.getElementById('task-popup-root'); if (p) p.remove(); };
+        window.completeTaskFromPopup = function () { if (!state.taskPopup) return; var p = state.taskPopup, d = findDeal(p.dealId); if (!d || !d.tasks[p.taskIndex]) return; if (d.ownerUid !== state.currentUser.uid) { alert('Чужая сделка'); return; } state.taskPopup = null; var el = document.getElementById('task-popup-root'); if (el) el.remove(); d.tasks[p.taskIndex].done = true; updateDealInDB(d.id, { tasks: d.tasks }); render(); };
+        window.startReschedule = function () { if (!state.taskPopup) return; state.taskPopup.rescheduling = true; var el = document.getElementById('task-popup-root'); if (el) el.remove(); renderTaskPopup(); };
+        window.cancelReschedule = function () { if (!state.taskPopup) return; state.taskPopup.rescheduling = false; var el = document.getElementById('task-popup-root'); if (el) el.remove(); renderTaskPopup(); };
+        window.saveReschedule = function () { var i = document.getElementById('task-popup-new-date'); if (!i || !i.value) { alert('Укажите дату и время'); return; } if (!state.taskPopup) return; var p = state.taskPopup, d = findDeal(p.dealId); if (!d || !d.tasks[p.taskIndex]) return; if (d.ownerUid !== state.currentUser.uid) { alert('Чужая сделка'); return; } var nd = new Date(i.value).toISOString(); state.taskPopup = null; var el = document.getElementById('task-popup-root'); if (el) el.remove(); d.tasks[p.taskIndex].date = nd; d.tasks[p.taskIndex].done = false; updateDealInDB(d.id, { tasks: d.tasks }); render(); };
+        window.goToDealFromPopup = function () { if (!state.taskPopup) return; var id = state.taskPopup.dealId; state.taskPopup = null; var el = document.getElementById('task-popup-root'); if (el) el.remove(); window.openDealModal(id, false); };
+
+        function renderTaskPopup() {
+            if (!state.taskPopup) return;
+            var d = findDeal(state.taskPopup.dealId);
+            if (!d || !d.tasks[state.taskPopup.taskIndex]) { state.taskPopup = null; var bad = document.getElementById('task-popup-root'); if (bad) bad.remove(); return; }
+            var t = d.tasks[state.taskPopup.taskIndex];
+            var bg = t.done ? 'bg-slate-100' : isOverdue(t) ? 'bg-red-50' : 'bg-emerald-50';
+            var bb = t.done ? 'bg-slate-200 text-slate-700' : isOverdue(t) ? 'bg-red-200 text-red-700' : 'bg-emerald-200 text-emerald-700';
+            var bt = t.done ? 'Выполнена' : isOverdue(t) ? 'Просрочена' : 'Активна';
+            var ed = d.ownerUid === state.currentUser.uid;
+            var body = state.taskPopup.rescheduling
+                ? '<div class="space-y-3"><label class="block text-xs font-semibold text-slate-600 uppercase">Новая дата и время:</label><input type="datetime-local" id="task-popup-new-date" value="' + toLocalInputValue(t.date) + '" class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white"><div class="flex gap-2"><button onclick="window.cancelReschedule()" class="flex-1 px-3 py-2.5 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium">Отмена</button><button onclick="window.saveReschedule()" class="flex-1 px-3 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold">Сохранить</button></div></div>'
+                : '<div class="grid grid-cols-3 gap-2"><button onclick="window.completeTaskFromPopup()" ' + ((!ed || t.done) ? 'disabled' : '') + ' class="px-3 py-3 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold disabled:opacity-40 flex flex-col items-center gap-1"><i class="fa-solid fa-check text-base"></i><span>Завершить</span></button><button onclick="window.startReschedule()" ' + (!ed ? 'disabled' : '') + ' class="px-3 py-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold disabled:opacity-40 flex flex-col items-center gap-1"><i class="fa-solid fa-calendar-days text-base"></i><span>Перенести</span></button><button onclick="window.goToDealFromPopup()" class="px-3 py-3 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold flex flex-col items-center gap-1"><i class="fa-solid fa-building text-base"></i><span>Сделка</span></button></div>';
+            var html = '<div id="task-popup-root" class="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 fade-in" onclick="if(event.target===this) window.closeTaskPopup()"><div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"><div class="px-6 py-4 ' + bg + ' border-b border-slate-100 flex items-start justify-between gap-3"><div class="flex-1 min-w-0"><div class="flex items-center gap-2 mb-2"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ' + bb + '">' + bt + '</span><span class="text-[10px] text-slate-500">' + formatDate(t.date) + '</span></div><h3 class="text-base font-bold text-slate-900 break-words">' + t.text + '</h3><button onclick="window.goToDealFromPopup()" class="mt-1 text-xs text-amber-600 font-semibold"><i class="fa-solid fa-building mr-1"></i>' + (d.businessName || d.title) + '</button></div><button onclick="window.closeTaskPopup()" class="w-8 h-8 rounded-lg hover:bg-white/60 flex items-center justify-center text-slate-400 flex-shrink-0"><i class="fa-solid fa-xmark text-lg"></i></button></div><div class="px-6 py-4">' + body + '</div></div></div>';
+            var ex = document.getElementById('task-popup-root'); if (ex) ex.remove();
+            var div = document.createElement('div'); div.innerHTML = html; document.body.appendChild(div.firstElementChild);
+        }
+
+        function renderAnalytics() {
+            var deals = getAnalyticsDeals(), total = deals.length;
+            var fa = deals.filter(function (d) { return d.stage === 'failed'; });
+            var faSum = fa.reduce(function (s, d) { return s + (d.investmentAmount || 0); }, 0);
+            var raw = deals.reduce(function (s, d) { return s + (d.investmentAmount || 0); }, 0);
+            var fu = deals.filter(function (d) { return d.stage === 'funded'; });
+            var fuSum = fu.reduce(function (s, d) { return s + (d.investmentAmount || 0); }, 0);
+            var au = deals.filter(function (d) { return d.stage === 'audit' || d.stage === 'funded'; }).length;
+            var cA = total > 0 ? ((au / total) * 100).toFixed(1) : '0.0';
+            var cF = total > 0 ? ((fu.length / total) * 100).toFixed(1) : '0.0';
+            var admin = isAdminClient(), mine = state.analyticsScope === 'mine' || !admin;
+            function card(icon, color, label, value, sub) {
+                return '<div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><div class="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-' + color + '-50 flex items-center justify-center mb-2 md:mb-4"><i class="fa-solid ' + icon + ' text-' + color + '-500"></i></div><p class="text-[10px] md:text-xs font-semibold text-slate-400 uppercase tracking-wider">' + label + '</p><p class="text-lg md:text-2xl font-bold text-slate-900 mt-1 truncate">' + value + '</p><p class="text-[10px] text-slate-400 mt-1">' + sub + '</p></div>';
+            }
+            return '<div class="h-full overflow-y-auto custom-scroll p-4 md:p-8 space-y-4 md:space-y-6"><div class="bg-white rounded-xl p-4 border border-slate-100 shadow-sm"><h3 class="font-bold text-slate-900">' + (mine ? 'Моя статистика' : 'Общая статистика команды') + '</h3><p class="text-xs text-slate-400">Показано сделок: ' + total + '</p></div><div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">' +
+                card('fa-briefcase', 'blue', 'Всего сделок', total, 'Факапов: ' + fa.length) +
+                card('fa-coins', 'amber', 'Объём без факапов', formatMoney(raw - faSum), 'Исключено: ' + formatMoney(faSum)) +
+                card('fa-check-circle', 'emerald', 'Получено', formatMoney(fuSum), 'Успешных: ' + fu.length) +
+                card('fa-magnifying-glass-chart', 'indigo', 'Конверсия в аудит', cA + '%', 'Дошли: ' + au + ' из ' + total) +
+                card('fa-percent', 'emerald', 'Конверсия в инвестиции', cF + '%', 'Получено: ' + fu.length + ' из ' + total) +
+                card('fa-circle-xmark', 'red', 'Провалено', fa.length, 'Сумма: ' + formatMoney(faSum)) +
+                '</div><div class="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6"><div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><h3 class="font-bold text-slate-900 mb-4 text-sm">Распределение по этапам</h3><div class="h-64 md:h-72"><canvas id="chartStages"></canvas></div></div><div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm"><h3 class="font-bold text-slate-900 mb-4 text-sm">Объём инвестиций (млн EUR)</h3><div class="h-64 md:h-72"><canvas id="chartAmounts"></canvas></div></div><div class="bg-white rounded-xl p-4 md:p-6 border border-slate-100 shadow-sm lg:col-span-2"><h3 class="font-bold text-slate-900 mb-4 text-sm">' + (admin ? 'Эффективность менеджеров' : 'Моя эффективность') + '</h3><div class="h-64 md:h-72"><canvas id="chartManagers"></canvas></div></div></div></div>';
+        }
+
+        function initCharts() {
+            var deals = getAnalyticsDeals(); if (!window.Chart) return;
+            Chart.defaults.font.family = "'Inter', sans-serif"; Chart.defaults.color = '#94a3b8';
+            var labels = STAGES.map(function (s) { return s.name.length > 15 ? s.name.substring(0, 15) + '...' : s.name; });
+            var counts = STAGES.map(function (s) { return deals.filter(function (d) { return d.stage === s.id; }).length; });
+            var amounts = STAGES.map(function (s) { return deals.filter(function (d) { return d.stage === s.id; }).reduce(function (a, d) { return a + (d.investmentAmount || 0); }, 0) / 1000000; });
+            var palette = ['#cbd5e1', '#bfdbfe', '#c7d2fe', '#ddd6fe', '#e9d5ff', '#f5d0fe', '#fbcfe8', '#fecdd3', '#fed7aa', '#fde68a', '#bbf7d0', '#fecaca'];
+            if (document.getElementById('chartStages')) new Chart(document.getElementById('chartStages'), { type: 'bar', data: { labels: labels, datasets: [{ data: counts, backgroundColor: palette, borderRadius: 6 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } }, x: { grid: { display: false }, ticks: { font: { size: 9 } } } } } });
+            if (document.getElementById('chartAmounts')) new Chart(document.getElementById('chartAmounts'), { type: 'line', data: { labels: labels, datasets: [{ data: amounts, borderColor: '#d4af37', backgroundColor: 'rgba(212,175,55,0.1)', fill: true, tension: 0.4 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true }, x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 45 } } } } });
+            if (document.getElementById('chartManagers')) {
+                if (isAdminClient()) {
+                    var ml = USERS.map(function (u) { return u.lastName + ' ' + u.firstName; });
+                    var mf = USERS.map(function (u) { return deals.filter(function (d) { return d.ownerEmail && d.ownerEmail.toLowerCase() === u.email.toLowerCase() && d.stage === 'funded'; }).reduce(function (s, d) { return s + (d.investmentAmount || 0); }, 0) / 1000000; });
+                    var mx = USERS.map(function (u) { return deals.filter(function (d) { return d.ownerEmail && d.ownerEmail.toLowerCase() === u.email.toLowerCase() && d.stage === 'failed'; }).length; });
+                    new Chart(document.getElementById('chartManagers'), { type: 'bar', data: { labels: ml, datasets: [{ label: 'Получено (млн)', data: mf, backgroundColor: '#10b981', borderRadius: 6, yAxisID: 'y' }, { label: 'Провалено', data: mx, backgroundColor: '#ef4444', borderRadius: 6, yAxisID: 'y1' }] }, options: { responsive: true, maintainAspectRatio: false, scales: { y: { position: 'left', beginAtZero: true }, y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false } }, x: { grid: { display: false } } } } });
+                } else {
+                    var f1 = deals.filter(function (d) { return d.stage === 'funded'; }).reduce(function (s, d) { return s + (d.investmentAmount || 0); }, 0) / 1000000;
+                    var f2 = deals.filter(function (d) { return d.stage === 'failed'; }).length;
+                    var f3 = deals.filter(function (d) { return d.stage !== 'funded' && d.stage !== 'failed'; }).length;
+                    new Chart(document.getElementById('chartManagers'), { type: 'bar', data: { labels: ['Получено (млн)', 'В работе', 'Провалено'], datasets: [{ data: [f1, f3, f2], backgroundColor: ['#10b981', '#f59e0b', '#ef4444'], borderRadius: 6 }] }, options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true }, x: { grid: { display: false } } } } });
+                }
+            }
+        }
+
+        window.toggleDropdown = function () { var d = document.getElementById('resp-dropdown-menu'); if (d) d.classList.toggle('hidden'); };
+        window.selectManager = function (uid) { if (state.modalReadOnly) return; window.selectedRespManagerUid = uid; var l = document.getElementById('resp-dropdown-label'); if (l) l.innerHTML = uid === '' ? '<span class="text-slate-400">Не назначен</span>' : '<span class="text-slate-900">' + labelForUid(uid) + '</span>'; var d = document.getElementById('resp-dropdown-menu'); if (d) d.classList.add('hidden'); };
+        window.closeDropdownOnOutside = function (e) { var d = document.getElementById('resp-dropdown-menu'), b = document.getElementById('resp-dropdown-btn'); if (d && b && !d.contains(e.target) && !b.contains(e.target)) d.classList.add('hidden'); };
+        window.openNewDealModal = function () { state.selectedDealId = null; state.modalOpen = true; state.modalReadOnly = false; state.dealFiles = []; state.uploadingName = null; state.taskPopup = null; state.newDealStage = null; render(); };
+        window.openNewDealModalWithStage = function (s) { state.selectedDealId = null; state.modalOpen = true; state.modalReadOnly = false; state.dealFiles = []; state.uploadingName = null; state.taskPopup = null; state.newDealStage = s; render(); };
+        window.openDealModal = function (id, ro) { state.selectedDealId = id; state.modalOpen = true; state.modalReadOnly = !!ro; state.dealFiles = []; state.uploadingName = null; state.taskPopup = null; state.newDealStage = null; loadFiles(id); render(); };
+        window.closeDealModal = function () { state.modalOpen = false; state.modalReadOnly = false; state.selectedDealId = null; state.newDealStage = null; var m = document.getElementById('modal-root'); if (m) m.remove(); render(); };
+
+        function renderModal() {
+            var deal = state.selectedDealId ? findDeal(state.selectedDealId) : null;
+            if (state.selectedDealId && !deal) { state.modalOpen = false; state.selectedDealId = null; var st = document.getElementById('modal-root'); if (st) st.remove(); return; }
+            var isNew = !deal;
+            var owner = !state.modalReadOnly && (isNew || deal.ownerUid === state.currentUser.uid);
+            var bn = isNew ? '' : (deal.businessName || '');
+            var bd = isNew ? '' : (deal.businessDescription || '');
+            var ia = isNew ? '' : (deal.investmentAmount || '');
+            var ru = isNew ? state.currentUser.uid : (deal.responsibleUid || '');
+            var stage = isNew ? (state.newDealStage || 'new') : (deal.stage || 'new');
+            var contacts = isNew ? [] : (deal.contacts || []);
+            var comments = isNew ? [] : (deal.comments || []);
+            var tasks = isNew ? [] : (deal.tasks || []);
+            var files = state.dealFiles || [];
+            var sObj = STAGES.find(function (s) { return s.id === stage; }) || STAGES[0];
+            window.tempContacts = isNew ? [{ name: '', phone: '', email: '', telegram: '', max: '' }] : JSON.parse(JSON.stringify(contacts));
+            window.selectedRespManagerUid = ru;
+            var dis = owner ? '' : 'disabled';
+            var badge = owner ? '' : '<span class="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded font-bold uppercase"><i class="fa-solid fa-lock mr-1"></i>Только просмотр</span>';
+            var meIni = state.currentUser.firstName[0] + (state.currentUser.lastName ? state.currentUser.lastName[0] : '');
+            var respOpts = '<button type="button" onclick="window.selectManager(\'\')" class="w-full text-left px-3 py-2.5 text-sm hover:bg-slate-50 flex items-center justify-between border-b border-slate-50"><span class="text-slate-600">Не назначен</span>' + (ru === '' ? '<i class="fa-solid fa-check text-amber-500"></i>' : '') + '</button><button type="button" onclick="window.selectManager(\'' + state.currentUser.uid + '\')" class="w-full text-left px-3 py-2.5 text-sm hover:bg-slate-50 flex items-center justify-between ' + (ru === state.currentUser.uid ? 'bg-amber-50' : '') + '"><div class="flex items-center gap-2"><div class="w-6 h-6 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-white text-[10px] font-bold">' + meIni + '</div><span class="text-slate-900 font-medium">' + state.currentUser.lastName + ' ' + state.currentUser.firstName + ' (я)</span></div>' + (ru === state.currentUser.uid ? '<i class="fa-solid fa-check text-amber-500"></i>' : '') + '</button>';
+            var filesHtml = files.map(function (f) {
+                var del = owner ? '<button onclick="event.stopPropagation(); window.deleteFileDoc(\'' + f.id + '\')" class="text-slate-300 hover:text-red-500 flex-shrink-0"><i class="fa-solid fa-trash text-xs"></i></button>' : '';
+                return '<div class="flex items-center gap-1 bg-slate-50 p-2 rounded-lg border border-slate-100 hover:border-amber-300"><button onclick="window.openFile(\'' + f.id + '\')" class="flex items-center gap-2 flex-1 min-w-0 text-left"><i class="fa-solid ' + (f.external ? 'fa-link' : 'fa-file-lines') + ' text-slate-400 flex-shrink-0"></i><span class="text-xs text-slate-700 truncate">' + f.name + '</span><span class="text-[9px] text-slate-400 flex-shrink-0">' + formatSize(f.size) + '</span><i class="fa-solid fa-download text-[10px] text-slate-300 flex-shrink-0"></i></button>' + del + '</div>';
+            }).join('');
+            var tasksHtml = tasks.map(function (t, i) {
+                var bg = t.done ? 'bg-slate-100 border-slate-200' : isOverdue(t) ? 'bg-red-50 border-red-200' : 'bg-emerald-50 border-emerald-200';
+                var bb = t.done ? 'bg-slate-300' : isOverdue(t) ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600';
+                var ic = t.done ? 'fa-check' : isOverdue(t) ? 'fa-exclamation' : 'fa-clock';
+                var del = owner ? '<button onclick="window.deleteTask(' + i + ')" class="text-slate-300 hover:text-red-500 p-1 flex-shrink-0"><i class="fa-solid fa-trash text-xs"></i></button>' : '';
+                return '<div class="flex items-start gap-2 ' + bg + ' p-3 rounded-lg border"><button onclick="window.toggleTask(' + i + ')" ' + (!owner || t.done ? 'disabled' : '') + ' class="mt-0.5 w-6 h-6 rounded-lg ' + bb + ' text-white flex items-center justify-center flex-shrink-0 disabled:opacity-50"><i class="fa-solid ' + ic + ' text-xs"></i></button><div class="flex-1 min-w-0"><p class="text-sm ' + (t.done ? 'line-through text-slate-400' : 'text-slate-800') + ' break-words">' + t.text + '</p><p class="text-[10px] text-slate-500 mt-1"><i class="fa-regular fa-clock mr-1"></i>' + formatDate(t.date) + (isOverdue(t) ? '<span class="text-red-600 font-bold ml-1 uppercase blink">Просрочена</span>' : '') + '</p></div>' + del + '</div>';
+            }).join('');
+            var commentsHtml = comments.map(function (c) { return '<div class="bg-slate-50 rounded-lg p-3 border border-slate-100"><div class="flex items-center justify-between mb-1"><span class="text-xs font-bold text-slate-700">' + (c.author || '') + '</span><span class="text-[10px] text-slate-400">' + formatDate(c.date) + '</span></div><p class="text-sm text-slate-600 break-words">' + c.text + '</p></div>'; }).join('');
+            var taskForm = owner ? '<div class="flex flex-col gap-2"><input type="text" id="m_task_text" class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm" placeholder="Описание задачи..."><input type="datetime-local" id="m_task_date" class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm"><button onclick="window.addTask()" class="bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-medium w-full"><i class="fa-solid fa-plus mr-1"></i>Добавить задачу</button></div>' : '';
+            var commentForm = owner ? '<div class="flex gap-2"><input type="text" id="m_comment" class="flex-1 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-sm" placeholder="Комментарий..."><button onclick="window.addComment()" class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm flex-shrink-0"><i class="fa-solid fa-paper-plane"></i></button></div>' : '';
+            var fileZone = owner && !isNew ? '<div class="space-y-2"><div class="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center hover:border-amber-400 cursor-pointer" onclick="document.getElementById(\'m_file\').click()"><i class="fa-solid fa-cloud-arrow-up text-slate-300 text-xl mb-1"></i><p class="text-[10px] text-slate-400">Загрузить файл (до 20 МБ)</p><input type="file" id="m_file" class="hidden" onchange="window.handleFileUpload(this)"></div><button onclick="window.attachLink()" class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-600"><i class="fa-solid fa-link mr-1"></i>Прикрепить ссылку</button></div>' : '';
+            var upl = state.uploadingName ? '<div class="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100"><i class="fa-solid fa-spinner fa-spin text-amber-500"></i><span class="text-xs text-slate-500 truncate">' + state.uploadingName + ' — загрузка…</span></div>' : '';
+            var delBtn = (!isNew && owner) ? '<button onclick="window.deleteDeal(\'' + deal.id + '\')" class="text-red-500 hover:bg-red-50 px-3 py-2 rounded-lg text-sm font-medium"><i class="fa-solid fa-trash mr-1"></i><span class="hidden sm:inline">Удалить</span></button>' : '<div></div>';
+            var saveBtn = owner ? '<button onclick="window.saveDeal()" class="px-4 md:px-5 py-2 rounded-lg bg-slate-900 text-white text-sm font-medium shadow-md"><i class="fa-solid fa-check mr-1"></i>' + (isNew ? 'Создать' : 'Сохранить') + '</button>' : '';
+            var html = '<div class="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-slate-900/60 backdrop-blur-sm p-0 md:p-4 fade-in" onclick="if(event.target===this) window.closeDealModal()"><div class="bg-white rounded-t-2xl md:rounded-2xl shadow-2xl w-full max-w-4xl h-[90vh] md:h-auto md:max-h-[90vh] flex flex-col overflow-hidden"><div class="px-4 md:px-8 py-4 md:py-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 flex-shrink-0"><div class="flex items-center gap-3 min-w-0"><div class="w-10 h-10 md:w-12 md:h-12 rounded-xl ' + (isNew ? 'bg-slate-200 border-slate-400' : sObj.cardBg + ' ' + sObj.cardBorder) + ' flex items-center justify-center flex-shrink-0 border-l-4"><i class="fa-solid ' + (isNew ? 'fa-plus' : 'fa-building') + ' text-slate-600 text-lg"></i></div><div class="min-w-0"><h2 class="text-lg md:text-xl font-bold text-slate-900 truncate">' + (isNew ? 'Новая сделка' : (deal.businessName || deal.title)) + '</h2><div class="flex items-center gap-2 mt-1 flex-wrap">' + badge + '<span class="text-xs text-slate-400">Владелец: ' + (isNew ? state.currentUser.firstName + ' ' + state.currentUser.lastName : labelForUid(deal.ownerUid)) + '</span></div><div class="mt-2 flex items-center gap-2"><span class="text-[10px] font-bold text-slate-500 uppercase">Этап</span><select id="m_stage" ' + dis + ' class="text-xs px-2 py-1 rounded-lg border ' + sObj.cardBorder + ' ' + sObj.headerBg + ' font-semibold max-w-[260px]">' + stageOptionsHtml(stage) + '</select></div></div></div><button onclick="window.closeDealModal()" class="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-400 flex-shrink-0 ml-2"><i class="fa-solid fa-xmark text-lg"></i></button></div><div class="flex-1 overflow-y-auto custom-scroll p-4 md:p-8"><div class="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8"><div class="lg:col-span-2 space-y-6"><div class="space-y-4"><h3 class="text-sm font-bold text-slate-900 uppercase border-b border-slate-100 pb-2">Основная информация</h3><div class="grid grid-cols-1 md:grid-cols-2 gap-4"><div class="md:col-span-2"><label class="block text-xs font-semibold text-slate-500 mb-1">Название компании *</label><input type="text" id="m_businessName" value="' + bn + '" ' + dis + ' class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 disabled:opacity-50" placeholder="ООО Ромашка"></div><div class="md:col-span-2 relative"><label class="block text-xs font-semibold text-slate-500 mb-1">Ответственный</label><button type="button" id="resp-dropdown-btn" onclick="window.toggleDropdown()" ' + dis + ' class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 text-left flex items-center justify-between disabled:opacity-50"><span id="resp-dropdown-label">' + (ru ? labelForUid(ru) : '<span class="text-slate-400">Не назначен</span>') + '</span><i class="fa-solid fa-chevron-down text-slate-400 text-xs"></i></button><div id="resp-dropdown-menu" class="hidden absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 dropdown-menu">' + respOpts + '</div></div><div class="md:col-span-2"><label class="block text-xs font-semibold text-slate-500 mb-1">Описание бизнеса</label><textarea id="m_businessDescription" rows="3" ' + dis + ' class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 disabled:opacity-50">' + bd + '</textarea></div><div class="md:col-span-2"><label class="block text-xs font-semibold text-slate-500 mb-1">Сумма инвестиций (EUR) *</label><input type="number" id="m_investmentAmount" value="' + ia + '" ' + dis + ' class="w-full px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 disabled:opacity-50" placeholder="1000000"></div></div></div><div class="space-y-4"><div class="flex items-center justify-between border-b border-slate-100 pb-2"><h3 class="text-sm font-bold text-slate-900 uppercase">Контакты</h3>' + (owner ? '<button onclick="window.addContactRow()" class="text-xs font-semibold text-amber-600"><i class="fa-solid fa-plus mr-1"></i>Добавить</button>' : '') + '</div><div id="contactsContainer" class="space-y-3"></div></div><div class="space-y-4"><h3 class="text-sm font-bold text-slate-900 uppercase border-b border-slate-100 pb-2">Комментарии</h3><div class="space-y-3 max-h-48 overflow-y-auto custom-scroll pr-2">' + commentsHtml + (comments.length ? '' : '<p class="text-xs text-slate-400 italic">Нет комментариев</p>') + '</div>' + commentForm + '</div></div><div class="space-y-6"><div class="space-y-4"><h3 class="text-sm font-bold text-slate-900 uppercase border-b border-slate-100 pb-2">Задачи</h3><div class="space-y-2 max-h-64 overflow-y-auto custom-scroll">' + tasksHtml + (tasks.length ? '' : '<p class="text-xs text-slate-400 italic">Нет задач</p>') + '</div>' + taskForm + '</div><div class="space-y-4"><h3 class="text-sm font-bold text-slate-900 uppercase border-b border-slate-100 pb-2">Файлы</h3><div class="space-y-2 max-h-48 overflow-y-auto custom-scroll">' + upl + filesHtml + (files.length || state.uploadingName ? '' : '<p class="text-xs text-slate-400 italic">Нет файлов</p>') + '</div>' + fileZone + (isNew ? '<p class="text-[10px] text-slate-400 italic">Файлы можно прикрепить после создания сделки</p>' : '') + '</div></div></div></div><div class="px-4 md:px-8 py-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between flex-shrink-0 gap-4">' + delBtn + '<div class="flex gap-3 ml-auto"><button onclick="window.closeDealModal()" class="px-4 md:px-5 py-2 rounded-lg border border-slate-200 text-slate-600 text-sm font-medium">Закрыть</button>' + saveBtn + '</div></div></div></div>';
+            var ex = document.getElementById('modal-root'); if (ex) ex.remove();
+            var div = document.createElement('div'); div.id = 'modal-root'; div.innerHTML = html; document.body.appendChild(div);
+            document.removeEventListener('click', window.closeDropdownOnOutside);
+            document.addEventListener('click', window.closeDropdownOnOutside);
+            refreshContactsInModal();
+        }
+
+        function renderContactRow(c, i, owner) {
+            var dis = owner ? '' : 'disabled';
+            var del = owner ? '<button onclick="window.removeContact(' + i + ')" class="text-slate-300 hover:text-red-500"><i class="fa-solid fa-trash text-xs"></i></button>' : '';
+            return '<div class="bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-2"><div class="flex items-center justify-between"><span class="text-[10px] font-bold text-slate-400 uppercase">Контакт #' + (i + 1) + '</span>' + del + '</div><input type="text" id="c_name_' + i + '" value="' + (c.name || '') + '" ' + dis + ' placeholder="ФИО" class="w-full px-2 py-1.5 rounded border border-slate-200 bg-white text-xs disabled:bg-slate-100"><div class="grid grid-cols-2 gap-2"><input type="text" id="c_phone_' + i + '" value="' + (c.phone || '') + '" ' + dis + ' placeholder="Телефон" class="w-full px-2 py-1.5 rounded border border-slate-200 bg-white text-xs disabled:bg-slate-100"><input type="email" id="c_email_' + i + '" value="' + (c.email || '') + '" ' + dis + ' placeholder="Email" class="w-full px-2 py-1.5 rounded border border-slate-200 bg-white text-xs disabled:bg-slate-100"><input type="text" id="c_telegram_' + i + '" value="' + (c.telegram || '') + '" ' + dis + ' placeholder="Telegram" class="w-full px-2 py-1.5 rounded border border-slate-200 bg-white text-xs disabled:bg-slate-100"><input type="text" id="c_max_' + i + '" value="' + (c.max || '') + '" ' + dis + ' placeholder="MAX" class="w-full px-2 py-1.5 rounded border border-slate-200 bg-white text-xs disabled:bg-slate-100"></div></div>';
+        }
+        function refreshContactsInModal() { var c = document.getElementById('contactsContainer'); if (!c) return; var d = state.selectedDealId ? findDeal(state.selectedDealId) : null; var o = !state.modalReadOnly && (!d || d.ownerUid === state.currentUser.uid); c.innerHTML = window.tempContacts.map(function (x, i) { return renderContactRow(x, i, o); }).join(''); }
+        window.addContactRow = function () { if (state.modalReadOnly) return; window.tempContacts.push({ name: '', phone: '', email: '', telegram: '', max: '' }); refreshContactsInModal(); };
+        window.removeContact = function (i) { if (state.modalReadOnly) return; window.tempContacts.splice(i, 1); refreshContactsInModal(); };
+        window.addComment = function () { if (state.modalReadOnly) return; var i = document.getElementById('m_comment'); if (!i || !i.value.trim()) return; var d = findDeal(state.selectedDealId); if (!d || d.ownerUid !== state.currentUser.uid) return; d.comments.push({ text: i.value.trim(), date: new Date().toISOString(), author: state.currentUser.lastName + ' ' + state.currentUser.firstName }); updateDealInDB(d.id, { comments: d.comments }); renderModal(); };
+        window.addTask = function () { if (state.modalReadOnly) return; var t = document.getElementById('m_task_text'), dt = document.getElementById('m_task_date'); if (!t || !t.value.trim()) return; var d = findDeal(state.selectedDealId); if (!d || d.ownerUid !== state.currentUser.uid) return; d.tasks.push({ text: t.value.trim(), done: false, date: dt && dt.value ? new Date(dt.value).toISOString() : new Date().toISOString() }); updateDealInDB(d.id, { tasks: d.tasks }); renderModal(); };
+        window.toggleTask = function (i) { if (state.modalReadOnly) return; var d = findDeal(state.selectedDealId); if (!d || !d.tasks[i] || d.ownerUid !== state.currentUser.uid) return; d.tasks[i].done = !d.tasks[i].done; updateDealInDB(d.id, { tasks: d.tasks }); renderModal(); };
+        window.deleteTask = function (i) { if (state.modalReadOnly) return; var d = findDeal(state.selectedDealId); if (!d || !d.tasks || d.ownerUid !== state.currentUser.uid) return; d.tasks.splice(i, 1); updateDealInDB(d.id, { tasks: d.tasks }); renderModal(); };
+
+        window.saveDeal = function () {
+            if (state.modalReadOnly) return;
+            var bnE = document.getElementById('m_businessName'), iaE = document.getElementById('m_investmentAmount'), sE = document.getElementById('m_stage'), bdE = document.getElementById('m_businessDescription');
+            if (!bnE || !iaE || !sE) return;
+            var bn = bnE.value.trim(), ia = parseFloat(iaE.value), stage = sE.value, bd = bdE ? bdE.value.trim() : '';
+            var ru = window.selectedRespManagerUid || '';
+            if (!bn || isNaN(ia) || ia <= 0) { alert('Заполните название компании и сумму инвестиций'); return; }
+            var contacts = window.tempContacts.map(function (_, i) {
+                function v(id) { var e = document.getElementById(id); return e ? e.value : ''; }
+                return { name: v('c_name_' + i), phone: v('c_phone_' + i), email: v('c_email_' + i), telegram: v('c_telegram_' + i), max: v('c_max_' + i) };
+            }).filter(function (c) { return c.name || c.phone || c.email; });
+            if (state.selectedDealId) {
+                var d = findDeal(state.selectedDealId);
+                if (!d || d.ownerUid !== state.currentUser.uid) { alert('Редактировать чужие сделки запрещено'); return; }
+                updateDealInDB(state.selectedDealId, { businessName: bn, title: bn, businessDescription: bd, investmentAmount: ia, responsibleUid: ru, stage: stage, contacts: contacts });
+            } else {
+                saveDealToDB({ title: bn, businessName: bn, businessDescription: bd, investmentAmount: ia, stage: stage, ownerUid: state.currentUser.uid, ownerEmail: state.currentUser.email, responsibleUid: ru, contacts: contacts, comments: [], tasks: [] });
+            }
+            window.closeDealModal();
+        };
+
+        window.deleteDeal = function (id) {
+            if (state.modalReadOnly) return;
+            if (!confirm('Удалить сделку?')) return;
+            var d = findDeal(id);
+            if (!d || d.ownerUid !== state.currentUser.uid) { alert('Удалять чужие сделки запрещено'); return; }
+            deleteDealFromDB(id);
+            var m = document.getElementById('modal-root'); if (m) m.remove();
+            state.modalOpen = false; state.selectedDealId = null;
+            render();
+        };
+
+        function initApp() {
+            if (!firebaseReady || !auth) { state.authLoading = false; render(); return; }
+            auth.onAuthStateChanged(onAuthStateChanged);
+        }
+        window.addEventListener('DOMContentLoaded', initApp);
+    </script>
+</body>
+</html>
